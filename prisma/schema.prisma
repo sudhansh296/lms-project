@@ -1,0 +1,551 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  LIBRARY_OWNER
+  LIBRARY_MANAGER
+  LIBRARY_STAFF
+  STUDENT
+}
+
+enum LibraryStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  REJECTED
+  CLOSED
+}
+
+enum SeatType {
+  STANDARD
+  PREMIUM
+  WINDOW
+  CHARGING
+  CABIN
+  PRIVATE
+  CORNER
+  OTHER
+}
+
+enum SeatStatus {
+  AVAILABLE
+  BOOKED
+  OCCUPIED
+  MAINTENANCE
+  DISABLED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  PENDING
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_REMINDER
+  MEMBERSHIP_EXPIRING
+  MEMBERSHIP_EXPIRED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  NEW_STUDENT
+  NEW_MEMBERSHIP
+  NEW_BOOKING
+  PAYMENT_RECEIVED
+  LIBRARY_APPROVED
+  LIBRARY_REJECTED
+  LIBRARY_SUSPENDED
+  SUBSCRIPTION_EXPIRING
+  PLATFORM_ALERT
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  mobile        String   @unique
+  email         String?  @unique
+  name          String
+  passwordHash  String?
+  role          Role
+  profilePhoto  String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  libraryOwner    LibraryOwner?
+  student         Student?
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+// ─── Library Owner ───────────────────────────────────────────────────────────
+
+model LibraryOwner {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  libraries           Library[]
+  subscription        OwnerSubscription?
+  // Razorpay linked account ID for receiving student payments
+  razorpayAccountId   String?  // e.g. "acc_XXXXXXXXXX" — set after owner onboards to Razorpay
+  razorpayAccountStatus String? @default("PENDING") // PENDING | ACTIVE | DISABLED
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  payments            OwnerPayment[]
+
+  @@map("library_owners")
+}
+
+// ─── Library ─────────────────────────────────────────────────────────────────
+
+model Library {
+  id              String        @id @default(cuid())
+  ownerId         String
+  owner           LibraryOwner  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name            String
+  description     String?
+  logoUrl         String?
+  coverPhotoUrl   String?
+  phone           String?
+  emailContact    String?
+  status          LibraryStatus @default(PENDING_VERIFICATION)
+  rejectionReason String?
+
+  // Location
+  addressLine1    String?
+  addressLine2    String?
+  area            String?
+  landmark        String?
+  city            String
+  state           String
+  pincode         String
+  country         String        @default("India")
+  latitude        Float?
+  longitude       Float?
+  formattedAddress String?
+
+  // Settings
+  bookingMode     String        @default("FLEXIBLE") // FLEXIBLE | FIXED_SLOT
+  minBookingMins  Int           @default(30)
+  maxBookingMins  Int           @default(480)
+  bookingInterval Int           @default(15)
+  is24Hours       Boolean       @default(false)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  photos          LibraryPhoto[]
+  facilities      LibraryFacility[]
+  hours           LibraryHours[]
+  rules           LibraryRule[]
+  seats           Seat[]
+  seatLayout      SeatLayout?
+  membershipPlans MembershipPlan[]
+  studentMemberships StudentMembership[]
+  bookings        Booking[]
+  reviews         Review[]
+  notifications   Notification[]
+
+  @@map("libraries")
+}
+
+model LibraryPhoto {
+  id         String   @id @default(cuid())
+  libraryId  String
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  url        String
+  category   String   @default("OTHER") // EXTERIOR | READING_HALL | SEATING_AREA | RECEPTION | FACILITIES | WASHROOM | OTHER
+  isCover    Boolean  @default(false)
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@map("library_photos")
+}
+
+model LibraryFacility {
+  id        String  @id @default(cuid())
+  libraryId String
+  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  name      String  // WIFI | AC | POWER_BACKUP | etc.
+  isCustom  Boolean @default(false)
+
+  @@map("library_facilities")
+}
+
+model LibraryHours {
+  id          String   @id @default(cuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int      // 0=Sun, 1=Mon, ... 6=Sat
+  isOpen      Boolean  @default(true)
+  openTime    String?  // "09:00"
+  closeTime   String?  // "22:00"
+  breakStart  String?
+  breakEnd    String?
+
+  @@unique([libraryId, dayOfWeek])
+  @@map("library_hours")
+}
+
+model LibraryRule {
+  id        String  @id @default(cuid())
+  libraryId String
+  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  rule      String
+  order     Int     @default(0)
+
+  @@map("library_rules")
+}
+
+// ─── Seats ───────────────────────────────────────────────────────────────────
+
+model SeatLayout {
+  id          String         @id @default(cuid())
+  libraryId   String         @unique
+  library     Library        @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  canvasWidth  Int           @default(800)
+  canvasHeight Int           @default(600)
+  objects     LayoutObject[]
+  updatedAt   DateTime       @updatedAt
+
+  @@map("seat_layouts")
+}
+
+model LayoutObject {
+  id         String     @id @default(cuid())
+  layoutId   String
+  layout     SeatLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  objectType String     // PILLAR | WALL | DOOR | WINDOW | RECEPTION | STAIRCASE | WASHROOM | TABLE | CABINET | PASSAGE | CUSTOM
+  label      String?
+  x          Float
+  y          Float
+  width      Float
+  height     Float
+  rotation   Float      @default(0)
+  color      String?
+
+  @@map("layout_objects")
+}
+
+model Seat {
+  id          String     @id @default(cuid())
+  libraryId   String
+  library     Library    @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  label       String
+  seatType    SeatType   @default(STANDARD)
+  status      SeatStatus @default(AVAILABLE)
+  x           Float
+  y           Float
+  width       Float      @default(60)
+  height      Float      @default(60)
+  rotation    Float      @default(0)
+  extraPrice  Float?     // additional price on top of base, if any
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  bookings    Booking[]
+
+  @@unique([libraryId, label])
+  @@map("seats")
+}
+
+// ─── Students ────────────────────────────────────────────────────────────────
+
+model Student {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentId  String   @unique @default(cuid())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  memberships StudentMembership[]
+  bookings    Booking[]
+  payments    Payment[]
+  attendance  Attendance[]
+  reviews     Review[]
+
+  @@map("students")
+}
+
+// ─── Membership Plans ────────────────────────────────────────────────────────
+
+model MembershipPlan {
+  id           String   @id @default(cuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  durationDays Int
+  price        Float
+  benefits     String[] // array of benefit strings
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  studentMemberships StudentMembership[]
+
+  @@map("membership_plans")
+}
+
+model StudentMembership {
+  id          String           @id @default(cuid())
+  studentId   String
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  libraryId   String
+  library     Library          @relation(fields: [libraryId], references: [id])
+  planId      String
+  plan        MembershipPlan   @relation(fields: [planId], references: [id])
+  status      MembershipStatus @default(PENDING)
+  startDate   DateTime
+  endDate     DateTime
+  paidAmount  Float
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  payment     Payment?
+
+  @@map("student_memberships")
+}
+
+// ─── Bookings ────────────────────────────────────────────────────────────────
+
+model Booking {
+  id           String        @id @default(cuid())
+  libraryId    String
+  library      Library       @relation(fields: [libraryId], references: [id])
+  studentId    String
+  student      Student       @relation(fields: [studentId], references: [id])
+  seatId       String
+  seat         Seat          @relation(fields: [seatId], references: [id])
+  bookingDate  DateTime      // date portion
+  startTime    DateTime
+  endTime      DateTime
+  status       BookingStatus @default(PENDING)
+  totalAmount  Float
+  bookingRef   String        @unique @default(cuid())
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  payment      Payment?
+  attendance   Attendance?
+
+  @@map("bookings")
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+
+model Payment {
+  id                  String        @id @default(cuid())
+  studentId           String
+  student             Student       @relation(fields: [studentId], references: [id])
+  amount              Float
+  status              PaymentStatus @default(PENDING)
+  paymentMethod       String?       // RAZORPAY | CASH | UPI | CARD
+  paymentType         String?       // SEAT_BOOKING | SUBSCRIPTION
+  // Razorpay fields
+  gatewayOrderId      String?
+  gatewayPaymentId    String?
+  gatewaySignature    String?
+  gatewayTransferId   String?       // Razorpay transfer ID (for route to owner)
+  refundId            String?
+  refundAmount        Float?
+  // Platform commission tracking
+  platformFee         Float?        // Amount kept by platform
+  ownerAmount         Float?        // Amount routed to library owner
+
+  // Polymorphic: either booking or membership
+  bookingId           String?       @unique
+  booking             Booking?      @relation(fields: [bookingId], references: [id])
+  membershipId        String?       @unique
+  membership          StudentMembership? @relation(fields: [membershipId], references: [id])
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+// ─── Owner Subscription Payments ─────────────────────────────────────────────
+
+model OwnerPayment {
+  id                  String        @id @default(cuid())
+  ownerId             String
+  owner               LibraryOwner  @relation(fields: [ownerId], references: [id])
+  amount              Float
+  status              PaymentStatus @default(PENDING)
+  paymentMethod       String?
+  gatewayOrderId      String?
+  gatewayPaymentId    String?
+  gatewaySignature    String?
+  subscriptionId      String?
+  description         String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@map("owner_payments")
+}
+
+// ─── Attendance ───────────────────────────────────────────────────────────────
+
+model Attendance {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@map("attendance")
+}
+
+// ─── Reviews ─────────────────────────────────────────────────────────────────
+
+model Review {
+  id        String   @id @default(cuid())
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  rating    Int      // 1-5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([libraryId, studentId])
+  @@map("reviews")
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  libraryId  String?
+  library    Library?         @relation(fields: [libraryId], references: [id])
+  type       NotificationType
+  title      String
+  message    String
+  isRead     Boolean          @default(false)
+  data       Json?
+  createdAt  DateTime         @default(now())
+
+  @@map("notifications")
+}
+
+// ─── Owner Subscriptions ─────────────────────────────────────────────────────
+
+model SubscriptionPlan {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  price          Float    @default(0)
+  billingCycle   String   @default("MONTHLY") // MONTHLY | YEARLY
+  trialDays      Int      @default(0)
+  maxSeats       Int?
+  maxStudents    Int?
+  maxStaff       Int?
+  maxBranches    Int?
+  features       String[]
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  subscriptions  OwnerSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model OwnerSubscription {
+  id          String             @id @default(cuid())
+  ownerId     String             @unique
+  owner       LibraryOwner       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planId      String
+  plan        SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status      SubscriptionStatus @default(TRIAL)
+  startDate   DateTime
+  endDate     DateTime?
+  trialEnd    DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@map("owner_subscriptions")
+}
+
+// ─── Audit Logs ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  role       Role?
+  libraryId  String?
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ─── OTP Verifications ────────────────────────────────────────────────────────
+
+model OtpVerification {
+  id          String   @id @default(cuid())
+  mobile      String
+  otpHash     String   // bcrypt hash — never store plaintext
+  purpose     String   // REGISTRATION | FORGOT_PASSWORD
+  userType    String   // STUDENT | LIBRARY_OWNER
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  verified    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([mobile, purpose, userType])
+  @@map("otp_verifications")
+}
