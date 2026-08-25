@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
     },
   },
   devIndicators: false,
+  // Allow network access for development
+  allowedDevOrigins: ['192.168.56.1', '192.168.0.55'],
 }
 
 export default nextConfig
