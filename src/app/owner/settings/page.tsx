@@ -5,30 +5,34 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PageLoading } from '@/components/ui/loading'
-import { Building2, CreditCard, User, Eye, EyeOff, Link2, CheckCircle, RefreshCw } from 'lucide-react'
+import { Building2, User, Eye, EyeOff, Link2, CheckCircle, RefreshCw, Share2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/contexts/auth-context'
-import { formatDate, formatCurrency } from '@/lib/utils'
-
-interface SubscriptionPlan {
-  id: string; name: string; price: number; billingCycle: string
-  trialDays: number; features: string[]; description?: string
-}
-
-interface Subscription {
-  status: string; trialEnd: string | null; endDate: string | null
-  plan: SubscriptionPlan
-}
+import { LEVEL_LABELS, LEVEL_COLORS } from '@/lib/referral'
+import type { OwnerMembershipLevel } from '@/lib/referral'
+import Link from 'next/link'
 
 interface Library {
   name: string; status: string; city: string
-  owner: { subscription: Subscription | null }
+}
+
+interface ReferralSummary {
+  ownerMembershipLevel: OwnerMembershipLevel
+  levelLabel: string
+  qualifiedCount: number
+  pendingCount: number
+  nextLevel: OwnerMembershipLevel | null
+  nextLevelLabel: string | null
+  nextLevelThreshold: number
+  needed: number
+  referralUrl: string | null
+  referralCode: string | null
 }
 
 export default function OwnerSettingsPage() {
   const { user } = useAuth()
   const [library, setLibrary] = useState<Library | null>(null)
-  const [plans, setPlans] = useState<SubscriptionPlan[]>([])
+  const [referral, setReferral] = useState<ReferralSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
   const [showPw, setShowPw] = useState(false)
@@ -36,16 +40,16 @@ export default function OwnerSettingsPage() {
   const [razorpayAccountId, setRazorpayAccountId] = useState('')
   const [savedAccountId, setSavedAccountId] = useState<string | null>(null)
   const [savingAccount, setSavingAccount] = useState(false)
-  const [buyingPlan, setBuyingPlan] = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([
       fetch('/api/owner/library').then(r => r.json()),
-      fetch('/api/owner/subscription').then(r => r.json()),
-    ]).then(([libData, subData]) => {
+      fetch('/api/owner/referral').then(r => r.json()),
+      fetch('/api/owner/razorpay-account').then(r => r.json()),
+    ]).then(([libData, refData, accountData]) => {
       setLibrary(libData.library)
-      setPlans(subData.plans ?? [])
-      if (subData.razorpayAccountId) setSavedAccountId(subData.razorpayAccountId)
+      setReferral(refData)
+      if (accountData.owner?.razorpayAccountId) setSavedAccountId(accountData.owner.razorpayAccountId)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -82,128 +86,15 @@ export default function OwnerSettingsPage() {
     }
   }
 
-  // ── Buy Subscription Plan ────────────────────────────────────────────────────
-  const buyPlan = async (plan: SubscriptionPlan) => {
-    if (plan.price === 0) {
-      // Free plan — activate directly
-      const res = await fetch('/api/owner/subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planId: plan.id,
-          razorpayOrderId: 'free',
-          razorpayPaymentId: 'free',
-          razorpaySignature: 'free',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) { toast.error(data.error ?? 'Failed'); return }
-      toast.success('Free plan activated!')
-      window.location.reload()
-      return
-    }
-
-    setBuyingPlan(plan.id)
-    try {
-      // Create Razorpay order — goes to platform's account
-      const orderRes = await fetch('/api/payments/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: plan.price,
-          notes: { planId: plan.id, type: 'SUBSCRIPTION', ownerId: user?.id },
-        }),
-      })
-      const orderData = await orderRes.json()
-      if (!orderRes.ok) { toast.error('Payment setup failed'); return }
-
-      const script = document.createElement('script')
-      script.src = 'https://checkout.razorpay.com/v1/checkout.js'
-      document.body.appendChild(script)
-
-      script.onload = () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rzp = new (window as any).Razorpay({
-          key: orderData.key,
-          amount: orderData.amount,
-          currency: orderData.currency,
-          name: 'StudyLib Platform',
-          description: `${plan.name} — ${plan.billingCycle} subscription`,
-          order_id: orderData.orderId,
-          config: {
-            display: {
-              blocks: {
-                banks: {
-                  name: 'All payment methods',
-                  instruments: [
-                    {
-                      method: 'upi',
-                    },
-                    {
-                      method: 'card',
-                    },
-                    {
-                      method: 'netbanking',
-                    },
-                    {
-                      method: 'wallet',
-                    },
-                  ],
-                },
-              },
-              sequence: ['block.banks'],
-              preferences: {
-                show_default_blocks: true,
-              },
-            },
-          },
-          handler: async (response: {
-            razorpay_payment_id: string
-            razorpay_order_id: string
-            razorpay_signature: string
-          }) => {
-            // Confirm subscription — payment goes to platform's Razorpay account
-            const confirmRes = await fetch('/api/owner/subscription', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                planId: plan.id,
-                razorpayOrderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature,
-              }),
-            })
-            const confirmData = await confirmRes.json()
-            if (!confirmRes.ok) {
-              toast.error(confirmData.error ?? 'Subscription activation failed')
-              return
-            }
-            toast.success(`${plan.name} activated! Valid until ${formatDate(confirmData.endDate)}`)
-            window.location.reload()
-          },
-          modal: { ondismiss: () => setBuyingPlan(null) },
-          theme: { color: '#7c3aed' },
-          prefill: { name: user?.name, contact: user?.mobile },
-        })
-        rzp.open()
-      }
-    } finally {
-      setBuyingPlan(null)
-    }
-  }
-
   const inp = 'w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500'
 
   if (loading) return <PageLoading />
-
-  const sub = library?.owner?.subscription
-  const subStatus = sub?.status ?? 'NONE'
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="text-slate-500 text-sm">Manage your account, payments, and subscription</p>
+        <p className="text-slate-500 text-sm">Manage your account and payment settings</p>
       </div>
 
       {/* ── Account ─────────────────────────────────────────────────────────── */}
@@ -245,6 +136,53 @@ export default function OwnerSettingsPage() {
                 <span className="font-medium text-slate-900">{r.value}</span>
               </div>
             ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Referral Membership ───────────────────────────────────────────────── */}
+      {referral && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Share2 className="h-4 w-4" /> Referral Membership
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Current Level</p>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${LEVEL_COLORS[referral.ownerMembershipLevel]}`}>
+                  {LEVEL_LABELS[referral.ownerMembershipLevel]}
+                </span>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-500 mb-1">Qualified Libraries</p>
+                <p className="text-xl font-bold text-slate-900 tabular-nums">{referral.qualifiedCount}</p>
+              </div>
+            </div>
+            {referral.referralCode && (
+              <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
+                <p className="text-xs text-indigo-600 flex-1">
+                  Code: <span className="font-mono font-bold tracking-wide">{referral.referralCode}</span>
+                </p>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(referral.referralUrl ?? '')
+                      .then(() => toast.success('Referral link copied!'))
+                      .catch(() => {})
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  Copy Link
+                </button>
+              </div>
+            )}
+            <Link href="/owner/subscription">
+              <Button variant="outline" size="sm" className="w-full gap-2">
+                <Share2 className="h-3.5 w-3.5" /> View Full Referral Dashboard
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       )}
@@ -292,188 +230,6 @@ export default function OwnerSettingsPage() {
           {!savedAccountId && (
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-700">
               ⚠ Until you link your account, student payments will be held in the platform account and transferred to you manually.
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── Platform Subscription ────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CreditCard className="h-4 w-4" /> Platform Subscription
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          {/* Current subscription */}
-          {sub && (
-            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="font-semibold text-slate-900">{sub.plan.name}</p>
-                <Badge variant={subStatus === 'ACTIVE' ? 'active' : subStatus === 'TRIAL' ? 'pending' : 'suspended'}>
-                  {subStatus}
-                </Badge>
-              </div>
-              <p className="text-slate-500 text-xs">
-                {sub.plan.price === 0 ? 'Free plan' : `${formatCurrency(sub.plan.price)} / ${sub.plan.billingCycle.toLowerCase()}`}
-              </p>
-              {sub.trialEnd && (
-                <p className="text-xs text-amber-600">Trial ends: {formatDate(sub.trialEnd)}</p>
-              )}
-              {sub.endDate && (
-                <p className="text-xs text-slate-500">Renews: {formatDate(sub.endDate)}</p>
-              )}
-              {sub.plan.features.length > 0 && (
-                <ul className="space-y-1 pt-1">
-                  {sub.plan.features.map((f, i) => (
-                    <li key={i} className="flex items-center gap-2 text-xs text-slate-600">
-                      <span className="text-emerald-500">✓</span> {f}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {/* Available plans to upgrade/switch */}
-          {plans.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-                {sub ? 'Switch Plan' : 'Choose a Plan'}
-              </p>
-              
-              {/* Group plans by tier */}
-              {['Starter', 'Basic', 'Professional', 'Enterprise'].map(tier => {
-                const tierPlans = plans.filter(p => p.name.startsWith(tier))
-                if (tierPlans.length === 0) return null
-                
-                const monthlyPlan = tierPlans.find(p => p.billingCycle === 'MONTHLY')
-                const yearlyPlan = tierPlans.find(p => p.billingCycle === 'YEARLY')
-                
-                return (
-                  <div key={tier} className="mb-4">
-                    <div className="flex items-baseline gap-2 mb-2">
-                      <h3 className="text-sm font-bold text-slate-800">{tier}</h3>
-                      {monthlyPlan?.description && (
-                        <p className="text-xs text-slate-500">{monthlyPlan.description}</p>
-                      )}
-                    </div>
-                    
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {/* Monthly Plan */}
-                      {monthlyPlan && (
-                        <div className={`rounded-xl border-2 ${
-                          sub?.plan.id === monthlyPlan.id 
-                            ? 'border-violet-500 bg-violet-50' 
-                            : 'border-slate-200 bg-white'
-                        } p-4`}>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-slate-500 uppercase">Monthly</span>
-                              {sub?.plan.id === monthlyPlan.id && (
-                                <Badge variant="active" className="text-[10px]">Current</Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="mb-3">
-                            <p className="text-2xl font-bold text-slate-900">
-                              {monthlyPlan.price === 0 ? 'Free' : `₹${monthlyPlan.price}`}
-                            </p>
-                            {monthlyPlan.price > 0 && (
-                              <p className="text-xs text-slate-500">per month</p>
-                            )}
-                            {monthlyPlan.trialDays > 0 && (
-                              <p className="text-xs text-emerald-600 mt-1">
-                                {monthlyPlan.trialDays}-day free trial
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            size="sm"
-                            className="w-full"
-                            variant={sub?.plan.id === monthlyPlan.id ? 'outline' : 'default'}
-                            loading={buyingPlan === monthlyPlan.id}
-                            onClick={() => buyPlan(monthlyPlan)}
-                            disabled={sub?.plan.id === monthlyPlan.id && subStatus === 'ACTIVE'}
-                          >
-                            {sub?.plan.id === monthlyPlan.id && subStatus === 'ACTIVE'
-                              ? 'Active Plan'
-                              : monthlyPlan.price === 0 ? 'Activate Free' : 'Get Monthly'}
-                          </Button>
-                        </div>
-                      )}
-                      
-                      {/* Yearly Plan */}
-                      {yearlyPlan && (
-                        <div className={`rounded-xl border-2 ${
-                          sub?.plan.id === yearlyPlan.id 
-                            ? 'border-violet-500 bg-violet-50' 
-                            : 'border-emerald-200 bg-emerald-50/50'
-                        } p-4 relative`}>
-                          {monthlyPlan && (
-                            <div className="absolute -top-2.5 right-4">
-                              <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5">
-                                Save {Math.round((1 - yearlyPlan.price / (monthlyPlan.price * 12)) * 100)}%
-                              </Badge>
-                            </div>
-                          )}
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-emerald-700 uppercase">Yearly</span>
-                              {sub?.plan.id === yearlyPlan.id && (
-                                <Badge variant="active" className="text-[10px]">Current</Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="mb-3">
-                            <p className="text-2xl font-bold text-slate-900">₹{yearlyPlan.price}</p>
-                            <p className="text-xs text-slate-500">
-                              per year · ₹{Math.round(yearlyPlan.price / 12)}/month
-                            </p>
-                            {monthlyPlan && (
-                              <p className="text-xs text-emerald-700 font-medium mt-1">
-                                Save ₹{(monthlyPlan.price * 12) - yearlyPlan.price}/year
-                              </p>
-                            )}
-                            {yearlyPlan.trialDays > 0 && (
-                              <p className="text-xs text-emerald-600 mt-1">
-                                {yearlyPlan.trialDays}-day free trial
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            size="sm"
-                            className="w-full bg-emerald-600 hover:bg-emerald-700"
-                            variant={sub?.plan.id === yearlyPlan.id ? 'outline' : 'default'}
-                            loading={buyingPlan === yearlyPlan.id}
-                            onClick={() => buyPlan(yearlyPlan)}
-                            disabled={sub?.plan.id === yearlyPlan.id && subStatus === 'ACTIVE'}
-                          >
-                            {sub?.plan.id === yearlyPlan.id && subStatus === 'ACTIVE'
-                              ? 'Active Plan'
-                              : 'Get Yearly'}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Features list */}
-                    {monthlyPlan?.features && monthlyPlan.features.length > 0 && (
-                      <div className="mt-3 rounded-lg bg-slate-50 p-3">
-                        <p className="text-xs font-medium text-slate-600 mb-2">Includes:</p>
-                        <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
-                          {monthlyPlan.features.slice(0, 6).map((f, i) => (
-                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600">
-                              <span className="text-emerald-500 mt-0.5 shrink-0">✓</span>
-                              <span>{f.replace('💰 ', '')}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
             </div>
           )}
         </CardContent>

@@ -3,9 +3,9 @@
 import { useState, useEffect, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Clock, Calendar, CheckCircle, CreditCard } from 'lucide-react'
+import { ArrowLeft, Clock, Calendar, CheckCircle, CreditCard, Receipt } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { formatDate, formatCurrency } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 import { format } from 'date-fns'
 
 interface Seat {
@@ -40,6 +40,15 @@ interface Library {
   membershipPlans: Array<{ id: string; name: string; price: number; durationDays: number }>
 }
 
+interface PaymentBreakdown {
+  baseAmount: number
+  platformFee: number
+  processingFee: number
+  gstAmount: number
+  totalAmount: number
+  ownerAmount: number
+}
+
 const COLORS = {
   available: '#22c55e',
   booked: '#f59e0b',
@@ -47,11 +56,15 @@ const COLORS = {
   selected: '#6366f1',
 }
 
+function fmt(n: number) {
+  return `₹${n.toFixed(2)}`
+}
+
 export default function BookSeatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: libraryId } = use(params)
   const router = useRouter()
 
-  const [step, setStep] = useState<'datetime' | 'seat' | 'confirm' | 'done'>('datetime')
+  const [step, setStep] = useState<'datetime' | 'seat' | 'summary' | 'paying' | 'done'>('datetime')
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('11:00')
@@ -60,10 +73,19 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
   const [layoutSize, setLayoutSize] = useState({ w: 900, h: 600 })
   const [selectedSeat, setSelectedSeat] = useState<Seat | null>(null)
   const [loadingSeats, setLoadingSeats] = useState(false)
-  const [paying, setPaying] = useState(false)
   const [library, setLibrary] = useState<Library | null>(null)
+
+  // Order data — set after seat-order API call
+  const [orderData, setOrderData] = useState<{
+    orderId: string; amount: number; currency: string; key: string
+    bookingId: string; bookingRef: string; breakdown: PaymentBreakdown
+  } | null>(null)
+  const [creatingOrder, setCreatingOrder] = useState(false)
+  const [paying, setPaying] = useState(false)
+
+  // Confirmation screen
   const [confirmedRef, setConfirmedRef] = useState('')
-  const [confirmedPaidAmount, setConfirmedPaidAmount] = useState(0)
+  const [confirmedBreakdown, setConfirmedBreakdown] = useState<PaymentBreakdown | null>(null)
 
   useEffect(() => {
     fetch(`/api/libraries/${libraryId}`)
@@ -103,49 +125,48 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
     setStep('seat')
   }
 
-  const handlePayAndBook = async () => {
+  // Step: after seat chosen, create the order to get the breakdown
+  const handleProceedToSummary = async () => {
     if (!selectedSeat) return
-    setPaying(true)
+    setCreatingOrder(true)
 
     const startISO = new Date(`${selectedDate}T${startTime}:00`).toISOString()
     const endISO = new Date(`${selectedDate}T${endTime}:00`).toISOString()
 
     try {
-      // Step 1: Backend creates PENDING booking + Razorpay order with DB price
-      // We never send an amount from the frontend — the backend determines it.
       const orderRes = await fetch('/api/payments/seat-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          libraryId,
-          seatId: selectedSeat.id,
-          startTime: startISO,
-          endTime: endISO,
-        }),
+        body: JSON.stringify({ libraryId, seatId: selectedSeat.id, startTime: startISO, endTime: endISO }),
       })
-      const orderData = await orderRes.json()
+      const data = await orderRes.json()
       if (!orderRes.ok) {
-        toast.error(orderData.error ?? 'Payment setup failed')
-        setPaying(false)
+        toast.error(data.error ?? 'Payment setup failed')
         return
       }
 
-      const bookingId: string = orderData.bookingId
-      const bookingRef: string = orderData.bookingRef
-
-      // Free booking — confirmed directly by backend, no Razorpay needed
-      if (orderData.free) {
-        setConfirmedPaidAmount(0)
-        setConfirmedRef(bookingRef)
+      // Free booking — confirmed directly
+      if (data.free) {
+        setConfirmedBreakdown(data.breakdown ?? null)
+        setConfirmedRef(data.bookingRef)
         setStep('done')
-        setPaying(false)
         return
       }
 
-      // Use the server-returned amount for display purposes only
-      const paidAmountPaise: number = orderData.amount
+      setOrderData(data)
+      setStep('summary')
+    } finally {
+      setCreatingOrder(false)
+    }
+  }
 
-      // Step 2: Load Razorpay script if not already loaded
+  // Step: student confirmed the summary, open Razorpay
+  const handlePayNow = async () => {
+    if (!orderData) return
+    setPaying(true)
+
+    try {
+      // Load Razorpay script if needed
       await new Promise<void>((resolve, reject) => {
         if ((window as unknown as Record<string, unknown>).Razorpay) { resolve(); return }
         const script = document.createElement('script')
@@ -155,16 +176,13 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
         document.body.appendChild(script)
       })
 
-      // Step 3: Open Razorpay checkout with server-provided amount
-      // NOTE: setPaying stays true while modal is open so the button shows loading.
-      // It is reset inside handler/ondismiss — NOT in a finally block.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rzp = new (window as any).Razorpay({
         key: orderData.key,
-        amount: paidAmountPaise,
+        amount: orderData.amount,       // paise — total the student pays
         currency: orderData.currency,
         name: 'StudyLib',
-        description: `Seat ${selectedSeat.label} — ${library?.name}`,
+        description: `Seat ${selectedSeat?.label} — ${library?.name}`,
         order_id: orderData.orderId,
         config: {
           display: {
@@ -172,25 +190,15 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
               banks: {
                 name: 'All payment methods',
                 instruments: [
-                  {
-                    method: 'upi',
-                  },
-                  {
-                    method: 'card',
-                  },
-                  {
-                    method: 'netbanking',
-                  },
-                  {
-                    method: 'wallet',
-                  },
+                  { method: 'upi' },
+                  { method: 'card' },
+                  { method: 'netbanking' },
+                  { method: 'wallet' },
                 ],
               },
             },
             sequence: ['block.banks'],
-            preferences: {
-              show_default_blocks: true,
-            },
+            preferences: { show_default_blocks: true },
           },
         },
         handler: async (response: {
@@ -198,8 +206,8 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
           razorpay_order_id: string
           razorpay_signature: string
         }) => {
-          // Step 4: Backend verifies signature + confirms booking + activates membership
-          const payRes = await fetch(`/api/student/bookings/${bookingId}/pay`, {
+          // Backend verifies signature + confirms booking + activates membership
+          const payRes = await fetch(`/api/student/bookings/${orderData.bookingId}/pay`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -214,16 +222,13 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
             setPaying(false)
             return
           }
-          // Use server-confirmed amount for display
-          const confirmedAmount = payData.booking?.totalAmount ?? paidAmountPaise / 100
-          setConfirmedPaidAmount(confirmedAmount)
-          setConfirmedRef(bookingRef)
+          setConfirmedBreakdown(payData.breakdown ?? orderData.breakdown)
+          setConfirmedRef(orderData.bookingRef)
           setPaying(false)
           setStep('done')
         },
         modal: {
           ondismiss: () => {
-            // User closed checkout — seat stays available, membership stays inactive
             toast('Payment cancelled. Your seat reservation has been released.')
             setPaying(false)
           },
@@ -231,7 +236,6 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
         theme: { color: '#6366f1' },
       })
       rzp.open()
-      // Do NOT call setPaying(false) here — modal is still open
     } catch (err) {
       console.error(err)
       toast.error('Something went wrong. Please try again.')
@@ -239,8 +243,9 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
     }
   }
 
-  // ── Done screen ──────────────────────────────────────────────────────────────
+  // ── Done screen ───────────────────────────────────────────────────────────
   if (step === 'done') {
+    const bd = confirmedBreakdown
     return (
       <div className="min-h-screen bg-indigo-600 flex flex-col items-center justify-center p-6 text-white text-center">
         <div className="rounded-full bg-white/20 p-6 mb-6">
@@ -254,13 +259,33 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
             { label: 'Date', value: formatDate(selectedDate) },
             { label: 'Time', value: `${startTime} → ${endTime}` },
             { label: 'Booking ID', value: confirmedRef.slice(-8).toUpperCase() },
-            { label: 'Amount Paid', value: formatCurrency(confirmedPaidAmount) },
           ].map(r => (
             <div key={r.label} className="flex justify-between text-sm">
               <span className="text-indigo-200">{r.label}</span>
               <span className="font-semibold">{r.value}</span>
             </div>
           ))}
+          {bd && (
+            <>
+              <div className="border-t border-white/20 pt-3 mt-3 space-y-1.5">
+                {[
+                  { label: 'Seat Booking', value: fmt(bd.baseAmount) },
+                  { label: 'Platform Fee (5%)', value: fmt(bd.platformFee) },
+                  ...(bd.processingFee > 0 ? [{ label: 'Processing Fee', value: fmt(bd.processingFee) }] : []),
+                  ...(bd.gstAmount > 0 ? [{ label: 'GST on Fee', value: fmt(bd.gstAmount) }] : []),
+                ].map(r => (
+                  <div key={r.label} className="flex justify-between text-sm">
+                    <span className="text-indigo-300">{r.label}</span>
+                    <span>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between text-sm font-bold pt-2 border-t border-white/20">
+                <span>Total Paid</span>
+                <span>{fmt(bd.totalAmount)}</span>
+              </div>
+            </>
+          )}
         </div>
         <Button
           onClick={() => router.push('/student/bookings')}
@@ -276,28 +301,120 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
     )
   }
 
+  // ── Payment Summary screen ────────────────────────────────────────────────
+  if (step === 'summary' && orderData && selectedSeat) {
+    const bd = orderData.breakdown
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <div className="bg-white border-b border-slate-100 px-4 py-3 sticky top-0 z-10">
+          <div className="flex items-center gap-3">
+            <button onClick={() => { setOrderData(null); setStep('seat') }} className="p-1.5 rounded-lg hover:bg-slate-100">
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div>
+              <h1 className="font-bold text-slate-900 text-sm">Payment Summary</h1>
+              <p className="text-xs text-slate-500">{library?.name}</p>
+            </div>
+            <div className="ml-auto flex gap-1">
+              {['datetime', 'seat', 'summary'].map((s, i) => (
+                <div key={s} className={`h-1.5 w-6 rounded-full transition-colors ${
+                  step === s ? 'bg-indigo-600' : i < 2 ? 'bg-indigo-300' : 'bg-slate-200'
+                }`} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4 max-w-md mx-auto">
+          {/* Booking details */}
+          <div className="rounded-2xl bg-white border border-slate-100 p-5 space-y-3">
+            <h2 className="font-bold text-slate-900 mb-2">Booking Details</h2>
+            {[
+              { label: 'Library', value: library?.name ?? '' },
+              { label: 'Seat', value: `${selectedSeat.label} (${selectedSeat.seatType})` },
+              { label: 'Date', value: formatDate(selectedDate) },
+              { label: 'Time', value: `${startTime} → ${endTime}` },
+            ].map(r => (
+              <div key={r.label} className="flex justify-between text-sm border-b border-slate-50 pb-2 last:border-0">
+                <span className="text-slate-500">{r.label}</span>
+                <span className="font-semibold text-slate-900">{r.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Payment breakdown */}
+          <div className="rounded-2xl bg-white border border-slate-100 p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Receipt className="h-4 w-4 text-indigo-500" />
+              <h2 className="font-bold text-slate-900">Payment Breakdown</h2>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Seat Booking</span>
+                <span className="font-medium text-slate-900">{fmt(bd.baseAmount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Platform / Service Fee (5%)</span>
+                <span className="font-medium text-slate-900">{fmt(bd.platformFee)}</span>
+              </div>
+              {bd.processingFee > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Payment Processing Fee</span>
+                  <span className="font-medium text-slate-900">{fmt(bd.processingFee)}</span>
+                </div>
+              )}
+              {bd.gstAmount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">GST on Processing Fee (18%)</span>
+                  <span className="font-medium text-slate-900">{fmt(bd.gstAmount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between pt-3 border-t border-slate-100 font-bold text-base">
+                <span className="text-slate-900">Total Payable</span>
+                <span className="text-indigo-600">{fmt(bd.totalAmount)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 flex items-center gap-2">
+            <CreditCard className="h-4 w-4 shrink-0 text-indigo-500" />
+            Payment is processed securely via Razorpay. UPI, cards, and net banking accepted.
+          </div>
+
+          <Button className="w-full" size="lg" loading={paying} onClick={handlePayNow}>
+            <CreditCard className="h-4 w-4" /> Pay {fmt(bd.totalAmount)}
+          </Button>
+          <Button variant="outline" className="w-full" size="lg"
+            onClick={() => { setOrderData(null); setStep('seat') }}>
+            ← Change Seat
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
       <div className="bg-white border-b border-slate-100 px-4 py-3 sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => step === 'seat' ? setStep('datetime') : step === 'confirm' ? setStep('seat') : router.back()}
+            onClick={() => step === 'seat' ? setStep('datetime') : router.back()}
             className="p-1.5 rounded-lg hover:bg-slate-100"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
             <h1 className="font-bold text-slate-900 text-sm">
-              {step === 'datetime' ? 'Select Date & Time' : step === 'seat' ? 'Choose a Seat' : 'Review & Pay'}
+              {step === 'datetime' ? 'Select Date & Time' : 'Choose a Seat'}
             </h1>
             <p className="text-xs text-slate-500">{library?.name}</p>
           </div>
           <div className="ml-auto flex gap-1">
-            {['datetime', 'seat', 'confirm'].map((s, i) => (
+            {['datetime', 'seat', 'summary'].map((s, i) => (
               <div key={s} className={`h-1.5 w-6 rounded-full transition-colors ${
                 step === s ? 'bg-indigo-600'
-                  : i < ['datetime', 'seat', 'confirm'].indexOf(step) ? 'bg-indigo-300'
+                  : i < ['datetime', 'seat'].indexOf(step) ? 'bg-indigo-300'
                   : 'bg-slate-200'
               }`} />
             ))}
@@ -305,7 +422,7 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
         </div>
       </div>
 
-      {/* ── Step 1: Date & Time ──────────────────────────────────────────────── */}
+      {/* ── Step 1: Date & Time ─────────────────────────────────────────────── */}
       {step === 'datetime' && (
         <div className="p-4 space-y-4">
           <div className="rounded-2xl bg-white border border-slate-100 p-4 space-y-4">
@@ -345,7 +462,7 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
         </div>
       )}
 
-      {/* ── Step 2: Seat Selection ───────────────────────────────────────────── */}
+      {/* ── Step 2: Seat Selection ──────────────────────────────────────────── */}
       {step === 'seat' && (
         <div className="p-4 space-y-4">
           {/* Time summary */}
@@ -416,47 +533,16 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
                 <p className="font-bold">Seat {selectedSeat.label}</p>
                 <p className="text-indigo-200 text-sm capitalize">{selectedSeat.seatType.toLowerCase()}</p>
               </div>
-              <Button onClick={() => setStep('confirm')} className="bg-white text-indigo-600 hover:bg-indigo-50" size="sm">
-                Continue →
+              <Button
+                onClick={handleProceedToSummary}
+                loading={creatingOrder}
+                className="bg-white text-indigo-600 hover:bg-indigo-50"
+                size="sm"
+              >
+                View Payment Summary →
               </Button>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ── Step 3: Review & Pay ─────────────────────────────────────────────── */}
-      {step === 'confirm' && selectedSeat && (
-        <div className="p-4 space-y-4">
-          <div className="rounded-2xl bg-white border border-slate-100 p-5 space-y-3">
-            <h2 className="font-bold text-slate-900 mb-4">Booking Summary</h2>
-            {[
-              { label: 'Library', value: library?.name ?? '' },
-              { label: 'Seat', value: `${selectedSeat.label} (${selectedSeat.seatType})` },
-              { label: 'Date', value: formatDate(selectedDate) },
-              { label: 'Time', value: `${startTime} → ${endTime}` },
-            ].map(r => (
-              <div key={r.label} className="flex justify-between text-sm border-b border-slate-50 pb-2 last:border-0">
-                <span className="text-slate-500">{r.label}</span>
-                <span className="font-semibold text-slate-900">{r.value}</span>
-              </div>
-            ))}
-            <div className="flex justify-between items-center pt-2">
-              <span className="text-slate-500 text-sm">Total Amount</span>
-              <span className="text-sm font-semibold text-indigo-600">Confirmed at checkout</span>
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 flex items-center gap-2">
-            <CreditCard className="h-4 w-4 shrink-0 text-indigo-500" />
-            Payment is processed securely via Razorpay. UPI, cards, and net banking accepted.
-          </div>
-
-          <Button className="w-full" size="lg" loading={paying} onClick={handlePayAndBook}>
-            <CreditCard className="h-4 w-4" /> Proceed to Payment
-          </Button>
-          <Button variant="outline" className="w-full" size="lg" onClick={() => setStep('seat')}>
-            ← Change Seat
-          </Button>
         </div>
       )}
     </div>

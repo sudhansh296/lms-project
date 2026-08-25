@@ -34,6 +34,8 @@ export const ownerRegisterSchema = z.object({
   country: z.string().default('India'),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
+  // Optional referral code used during registration
+  referralCode: z.string().optional(),
 })
 
 export const libraryUpdateSchema = z.object({
@@ -56,6 +58,7 @@ export const libraryUpdateSchema = z.object({
   maxBookingMins: z.number().min(60).max(1440).optional(),
   bookingInterval: z.number().min(5).max(60).optional(),
   is24Hours: z.boolean().optional(),
+  basePrice: z.number().min(0).optional(),
 })
 
 export const seatSchema = z.object({

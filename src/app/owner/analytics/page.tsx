@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatCard } from '@/components/ui/stat-card'
 import { PageLoading } from '@/components/ui/loading'
+import { UpgradeGate } from '@/components/ui/upgrade-gate'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line, AreaChart, Area
@@ -16,6 +17,8 @@ interface AnalyticsData {
   popularSeats: Array<{ seatId: string; label: string; bookings: number }>
   peakHours: Array<{ hour: string; bookings: number }>
   membershipGrowth: Array<{ label: string; count: number }>
+  upgradeRequired?: boolean
+  error?: string
 }
 
 export default function OwnerAnalyticsPage() {
@@ -27,6 +30,10 @@ export default function OwnerAnalyticsPage() {
   }, [])
 
   if (loading) return <PageLoading />
+
+  if (data?.upgradeRequired) {
+    return <UpgradeGate message={data.error ?? 'Analytics requires Level 1 or higher. Refer more libraries to unlock.'} />
+  }
 
   const peakHour = data?.peakHours.reduce((max, h) => h.bookings > max.bookings ? h : max, { hour: '—', bookings: 0 })
 

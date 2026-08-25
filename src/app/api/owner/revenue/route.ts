@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, format } from 'date-fns'
+import { checkAnalyticsAccess } from '@/lib/level-limits'
+import type { OwnerMembershipLevel } from '@/lib/referral'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -12,6 +14,19 @@ export async function GET(request: NextRequest) {
     const session = await requireAuth(['LIBRARY_OWNER', 'LIBRARY_MANAGER'])
     const library = await getOwnerLibrary(session.userId)
     if (!library) return Response.json({ error: 'Library not found' }, { status: 404 })
+
+    // ── Revenue reports require Level 2+ ────────────────────────────────────
+    const owner = await prisma.libraryOwner.findUnique({
+      where: { userId: session.userId },
+      select: { ownerMembershipLevel: true },
+    })
+    const accessCheck = checkAnalyticsAccess(
+      (owner?.ownerMembershipLevel ?? 'STANDARD') as OwnerMembershipLevel,
+      'full'
+    )
+    if (!accessCheck.allowed) {
+      return Response.json({ error: accessCheck.reason, upgradeRequired: true }, { status: 403 })
+    }
 
     const { searchParams } = new URL(request.url)
     const period = searchParams.get('period') ?? 'month' // today | yesterday | week | month | custom

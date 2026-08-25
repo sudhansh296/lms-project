@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { seatSchema } from '@/lib/validations'
+import { checkSeatLimit } from '@/lib/level-limits'
+import type { OwnerMembershipLevel } from '@/lib/referral'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({
@@ -39,6 +41,29 @@ export async function POST(request: NextRequest) {
     const parsed = seatSchema.safeParse(body)
     if (!parsed.success) {
       return Response.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
+    }
+
+    // ── Seat limit check ─────────────────────────────────────────────────────
+    const owner = await prisma.libraryOwner.findUnique({
+      where: { userId: session.userId },
+      select: {
+        ownerMembershipLevel: true,
+        _count: { select: { libraries: true } },
+      },
+    })
+    if (owner) {
+      // Count total seats across all the owner's libraries
+      const ownerLibraries = await prisma.library.findMany({
+        where: { owner: { userId: session.userId } },
+        select: { id: true },
+      })
+      const totalSeats = await prisma.seat.count({
+        where: { libraryId: { in: ownerLibraries.map(l => l.id) } },
+      })
+      const limitCheck = checkSeatLimit(owner.ownerMembershipLevel as OwnerMembershipLevel, totalSeats)
+      if (!limitCheck.allowed) {
+        return Response.json({ error: limitCheck.reason }, { status: 403 })
+      }
     }
 
     // Check label uniqueness within library

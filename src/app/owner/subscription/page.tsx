@@ -5,169 +5,94 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PageLoading } from '@/components/ui/loading'
-import { CreditCard, CheckCircle, ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Copy, Share2, CheckCircle, Clock, XCircle, Users, TrendingUp, Link2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useAuth } from '@/contexts/auth-context'
-import { formatDate, formatCurrency } from '@/lib/utils'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { REFERRAL_THRESHOLDS, LEVEL_LABELS, LEVEL_COLORS, LEVEL_BENEFITS } from '@/lib/referral'
+import type { OwnerMembershipLevel } from '@/lib/referral'
 
-interface SubscriptionPlan {
+interface ReferralEntry {
   id: string
-  name: string
-  price: number
-  billingCycle: string
-  trialDays: number
-  features: string[]
-  description?: string
+  libraryId: string | null
+  libraryName: string
+  libraryStatus: string | null
+  referralStatus: 'PENDING' | 'QUALIFIED' | 'REJECTED' | 'INVALID'
+  registeredAt: string
+  qualifiedAt: string | null
 }
 
-interface Subscription {
-  status: string
-  trialEnd: string | null
-  endDate: string | null
-  plan: SubscriptionPlan
+interface ReferralData {
+  referralCode: string | null
+  referralUrl: string | null
+  ownerMembershipLevel: OwnerMembershipLevel
+  levelLabel: string
+  qualifiedCount: number
+  pendingCount: number
+  nextLevel: OwnerMembershipLevel | null
+  nextLevelLabel: string | null
+  nextLevelThreshold: number
+  needed: number
+  referralHistory: ReferralEntry[]
 }
 
-export default function OwnerSubscriptionPage() {
-  const { user } = useAuth()
+const REFERRAL_STATUS_CONFIG = {
+  QUALIFIED: { label: 'Qualified', icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  PENDING:   { label: 'Pending',   icon: Clock,        color: 'text-amber-600',   bg: 'bg-amber-50'   },
+  REJECTED:  { label: 'Rejected',  icon: XCircle,      color: 'text-red-600',     bg: 'bg-red-50'     },
+  INVALID:   { label: 'Invalid',   icon: XCircle,      color: 'text-slate-500',   bg: 'bg-slate-50'   },
+}
+
+export default function ReferralMembershipPage() {
   const router = useRouter()
-  const [subscription, setSubscription] = useState<Subscription | null>(null)
-  const [plans, setPlans] = useState<SubscriptionPlan[]>([])
+  const [data, setData] = useState<ReferralData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [buyingPlan, setBuyingPlan] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/owner/subscription')
+    fetch('/api/owner/referral')
       .then(r => r.json())
-      .then(d => {
-        setSubscription(d.subscription)
-        setPlans(d.plans ?? [])
-      })
+      .then(d => setData(d))
       .finally(() => setLoading(false))
   }, [])
 
-  const buyPlan = async (plan: SubscriptionPlan) => {
-    if (plan.price === 0) {
-      const res = await fetch('/api/owner/subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planId: plan.id,
-          razorpayOrderId: 'free',
-          razorpayPaymentId: 'free',
-          razorpaySignature: 'free',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        toast.error(data.error ?? 'Failed')
-        return
+  const copyLink = () => {
+    if (!data?.referralUrl) return
+    navigator.clipboard.writeText(data.referralUrl)
+      .then(() => toast.success('Referral link copied!'))
+      .catch(() => toast.error('Could not copy — please copy manually'))
+  }
+
+  const shareLink = async () => {
+    if (!data?.referralUrl) return
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Join StudyLib as a Library Owner',
+          text: 'Register your library on StudyLib using my referral link.',
+          url: data.referralUrl,
+        })
+      } catch {
+        // User cancelled share — no error needed
       }
-      toast.success('Free plan activated!')
-      window.location.reload()
-      return
-    }
-
-    setBuyingPlan(plan.id)
-    try {
-      const orderRes = await fetch('/api/payments/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: plan.price,
-          notes: { planId: plan.id, type: 'SUBSCRIPTION', ownerId: user?.id },
-        }),
-      })
-      const orderData = await orderRes.json()
-      if (!orderRes.ok) {
-        toast.error('Payment setup failed')
-        return
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        if ((window as unknown as Record<string, unknown>).Razorpay) {
-          resolve()
-          return
-        }
-        const script = document.createElement('script')
-        script.src = 'https://checkout.razorpay.com/v1/checkout.js'
-        script.onload = () => resolve()
-        script.onerror = () => reject(new Error('Failed to load Razorpay'))
-        document.body.appendChild(script)
-      })
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rzp = new (window as any).Razorpay({
-        key: orderData.key,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        name: 'StudyLib Platform',
-        description: `${plan.name} — ${plan.billingCycle} subscription`,
-        order_id: orderData.orderId,
-        config: {
-          display: {
-            blocks: {
-              banks: {
-                name: 'All payment methods',
-                instruments: [
-                  {
-                    method: 'upi',
-                  },
-                  {
-                    method: 'card',
-                  },
-                  {
-                    method: 'netbanking',
-                  },
-                  {
-                    method: 'wallet',
-                  },
-                ],
-              },
-            },
-            sequence: ['block.banks'],
-            preferences: {
-              show_default_blocks: true,
-            },
-          },
-        },
-        handler: async (response: {
-          razorpay_payment_id: string
-          razorpay_order_id: string
-          razorpay_signature: string
-        }) => {
-          const confirmRes = await fetch('/api/owner/subscription', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              planId: plan.id,
-              razorpayOrderId: response.razorpay_order_id,
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpaySignature: response.razorpay_signature,
-            }),
-          })
-          const confirmData = await confirmRes.json()
-          if (!confirmRes.ok) {
-            toast.error(confirmData.error ?? 'Subscription activation failed')
-            return
-          }
-          toast.success(`${plan.name} activated! Valid until ${formatDate(confirmData.endDate)}`)
-          window.location.reload()
-        },
-        modal: { ondismiss: () => setBuyingPlan(null) },
-        theme: { color: '#7c3aed' },
-        prefill: { name: user?.name, contact: user?.mobile },
-      })
-      rzp.open()
-    } finally {
-      setBuyingPlan(null)
+    } else {
+      copyLink()
     }
   }
 
   if (loading) return <PageLoading />
+  if (!data) return null
 
-  const subStatus = subscription?.status ?? 'NONE'
+  const level = data.ownerMembershipLevel
+  const progressPct = data.nextLevel
+    ? Math.min(100, (data.qualifiedCount / data.nextLevelThreshold) * 100)
+    : 100
+
+  // Level thresholds for the roadmap display
+  const levels: Array<{ key: OwnerMembershipLevel; threshold: number }> = [
+    { key: 'STANDARD', threshold: REFERRAL_THRESHOLDS.STANDARD },
+    { key: 'LEVEL_1',  threshold: REFERRAL_THRESHOLDS.LEVEL_1  },
+    { key: 'LEVEL_2',  threshold: REFERRAL_THRESHOLDS.LEVEL_2  },
+    { key: 'LEVEL_3',  threshold: REFERRAL_THRESHOLDS.LEVEL_3  },
+  ]
 
   return (
     <div className="space-y-6">
@@ -177,234 +102,207 @@ export default function OwnerSubscriptionPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Platform Subscription</h1>
-          <p className="text-slate-500 text-sm">Choose the best plan for your library</p>
+          <h1 className="text-2xl font-bold text-slate-900">Referral Membership</h1>
+          <p className="text-slate-500 text-sm">Grow your network and earn membership levels</p>
         </div>
       </div>
 
-      {/* Current Subscription */}
-      {subscription && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-emerald-500" />
-              Current Plan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="font-semibold text-slate-900">{subscription.plan.name}</p>
-                <Badge
-                  variant={
-                    subStatus === 'ACTIVE' ? 'active' : subStatus === 'TRIAL' ? 'pending' : 'suspended'
-                  }
-                >
-                  {subStatus}
-                </Badge>
+      {/* Current Level Card */}
+      <Card className="border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50">
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm text-slate-500 mb-1">Current Membership Level</p>
+              <div className="flex items-center gap-3">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${LEVEL_COLORS[level]}`}>
+                  {LEVEL_LABELS[level]}
+                </span>
               </div>
-              <p className="text-slate-500 text-xs">
-                {subscription.plan.price === 0
-                  ? 'Free plan'
-                  : `${formatCurrency(subscription.plan.price)} / ${subscription.plan.billingCycle.toLowerCase()}`}
-              </p>
-              {subscription.trialEnd && (
-                <p className="text-xs text-amber-600">Trial ends: {formatDate(subscription.trialEnd)}</p>
-              )}
-              {subscription.endDate && (
-                <p className="text-xs text-slate-500">Renews: {formatDate(subscription.endDate)}</p>
-              )}
-              {subscription.plan.features.length > 0 && (
-                <ul className="space-y-1 pt-2">
-                  {subscription.plan.features.map((f, i) => (
-                    <li key={i} className="flex items-center gap-2 text-xs text-slate-600">
-                      <span className="text-emerald-500">✓</span> {f}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div className="flex gap-6 mt-4 text-sm">
+                <div>
+                  <p className="text-slate-500">Qualified Libraries</p>
+                  <p className="text-2xl font-bold text-slate-900 tabular-nums">{data.qualifiedCount}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Pending</p>
+                  <p className="text-2xl font-bold text-amber-600 tabular-nums">{data.pendingCount}</p>
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            {data.nextLevel && (
+              <div className="rounded-2xl bg-white/80 border border-violet-200 p-4 min-w-[180px]">
+                <p className="text-xs text-slate-500 mb-1">Next Level</p>
+                <p className="font-bold text-slate-900">{data.nextLevelLabel}</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  {data.needed} more verified {data.needed === 1 ? 'library' : 'libraries'} needed
+                </p>
+                <div className="mt-3 h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-violet-500 rounded-full transition-all"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1 text-right">
+                  {data.qualifiedCount} / {data.nextLevelThreshold}
+                </p>
+              </div>
+            )}
+            {!data.nextLevel && (
+              <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                <p className="text-xs text-amber-700 font-medium">🏆 Maximum Level Reached</p>
+                <p className="text-xs text-amber-600 mt-1">You&apos;re at the top tier!</p>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Available Plans */}
-      <div>
-        <h2 className="text-lg font-bold text-slate-900 mb-4">
-          {subscription ? 'Switch to a Different Plan' : 'Choose Your Plan'}
-        </h2>
-
-        {plans.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <p className="text-slate-400">No subscription plans available</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-6">
-            {['Starter', 'Basic', 'Professional', 'Enterprise'].map(tier => {
-              const tierPlans = plans.filter(p => p.name.startsWith(tier))
-              if (tierPlans.length === 0) return null
-
-              const monthlyPlan = tierPlans.find(p => p.billingCycle === 'MONTHLY')
-              const yearlyPlan = tierPlans.find(p => p.billingCycle === 'YEARLY')
-
+      {/* Level Roadmap */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <TrendingUp className="h-4 w-4 text-violet-500" /> Membership Levels & Benefits
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {levels.map(({ key, threshold }) => {
+              const isCurrent = level === key
+              const isUnlocked = data.qualifiedCount >= threshold
+              const benefits = LEVEL_BENEFITS[key]
               return (
-                <div key={tier}>
-                  <div className="flex items-baseline gap-3 mb-4">
-                    <h3 className="text-xl font-bold text-slate-800">{tier}</h3>
-                    {monthlyPlan?.description && (
-                      <p className="text-sm text-slate-500">{monthlyPlan.description}</p>
-                    )}
+                <div
+                  key={key}
+                  className={`rounded-xl p-4 border-2 transition-all ${
+                    isCurrent
+                      ? 'border-violet-500 bg-violet-50'
+                      : isUnlocked
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-slate-200 bg-slate-50 opacity-70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <p className={`text-sm font-bold ${isCurrent ? 'text-violet-700' : isUnlocked ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {LEVEL_LABELS[key]}
+                    </p>
+                    {isCurrent && <span className="text-[10px] text-violet-600 font-medium bg-violet-100 px-1.5 py-0.5 rounded-full">Current</span>}
+                    {!isCurrent && isUnlocked && <span className="text-[10px] text-emerald-600 font-medium bg-emerald-100 px-1.5 py-0.5 rounded-full">✓ Unlocked</span>}
                   </div>
-
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {/* Monthly Plan */}
-                    {monthlyPlan && (
-                      <Card
-                        className={`${
-                          subscription?.plan.id === monthlyPlan.id
-                            ? 'ring-2 ring-violet-500 bg-violet-50'
-                            : 'hover:shadow-lg transition-shadow'
-                        }`}
-                      >
-                        <CardContent className="p-6">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-slate-500 uppercase">Monthly</span>
-                              {subscription?.plan.id === monthlyPlan.id && (
-                                <Badge variant="active" className="text-xs">
-                                  Current
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="mb-6">
-                            <p className="text-4xl font-bold text-slate-900">
-                              {monthlyPlan.price === 0 ? 'Free' : `₹${monthlyPlan.price}`}
-                            </p>
-                            {monthlyPlan.price > 0 && <p className="text-sm text-slate-500 mt-1">per month</p>}
-                            {monthlyPlan.trialDays > 0 && (
-                              <p className="text-sm text-emerald-600 font-medium mt-2">
-                                {monthlyPlan.trialDays}-day free trial
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            className="w-full mb-4"
-                            variant={subscription?.plan.id === monthlyPlan.id ? 'outline' : 'default'}
-                            loading={buyingPlan === monthlyPlan.id}
-                            onClick={() => buyPlan(monthlyPlan)}
-                            disabled={subscription?.plan.id === monthlyPlan.id && subStatus === 'ACTIVE'}
-                          >
-                            {subscription?.plan.id === monthlyPlan.id && subStatus === 'ACTIVE'
-                              ? 'Current Plan'
-                              : monthlyPlan.price === 0
-                              ? 'Activate Free'
-                              : 'Get Monthly'}
-                          </Button>
-                          {monthlyPlan.features && monthlyPlan.features.length > 0 && (
-                            <ul className="space-y-2">
-                              {monthlyPlan.features.map((f, i) => (
-                                <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-                                  <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-                                  <span>{f.replace('💰 ', '')}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Yearly Plan */}
-                    {yearlyPlan && (
-                      <Card
-                        className={`relative ${
-                          subscription?.plan.id === yearlyPlan.id
-                            ? 'ring-2 ring-violet-500 bg-violet-50'
-                            : 'ring-2 ring-emerald-200 hover:shadow-lg transition-shadow'
-                        }`}
-                      >
-                        {monthlyPlan && (
-                          <div className="absolute -top-3 right-4">
-                            <Badge className="bg-emerald-600 text-white text-xs px-3 py-1">
-                              Save {Math.round((1 - yearlyPlan.price / (monthlyPlan.price * 12)) * 100)}%
-                            </Badge>
-                          </div>
-                        )}
-                        <CardContent className="p-6">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-emerald-700 uppercase">Yearly</span>
-                              {subscription?.plan.id === yearlyPlan.id && (
-                                <Badge variant="active" className="text-xs">
-                                  Current
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="mb-6">
-                            <p className="text-4xl font-bold text-slate-900">₹{yearlyPlan.price}</p>
-                            <p className="text-sm text-slate-500 mt-1">
-                              per year · ₹{Math.round(yearlyPlan.price / 12)}/month
-                            </p>
-                            {monthlyPlan && (
-                              <p className="text-sm text-emerald-700 font-semibold mt-2">
-                                Save ₹{monthlyPlan.price * 12 - yearlyPlan.price}/year
-                              </p>
-                            )}
-                            {yearlyPlan.trialDays > 0 && (
-                              <p className="text-sm text-emerald-600 font-medium mt-1">
-                                {yearlyPlan.trialDays}-day free trial
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            className="w-full mb-4 bg-emerald-600 hover:bg-emerald-700"
-                            variant={subscription?.plan.id === yearlyPlan.id ? 'outline' : 'default'}
-                            loading={buyingPlan === yearlyPlan.id}
-                            onClick={() => buyPlan(yearlyPlan)}
-                            disabled={subscription?.plan.id === yearlyPlan.id && subStatus === 'ACTIVE'}
-                          >
-                            {subscription?.plan.id === yearlyPlan.id && subStatus === 'ACTIVE'
-                              ? 'Current Plan'
-                              : 'Get Yearly'}
-                          </Button>
-                          {yearlyPlan.features && yearlyPlan.features.length > 0 && (
-                            <ul className="space-y-2">
-                              {yearlyPlan.features.slice(0, -1).map((f, i) => (
-                                <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-                                  <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-                                  <span>{f.replace('💰 ', '')}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
+                  <p className="text-[11px] text-slate-500 mb-3">
+                    {threshold === 0 ? 'Default' : `${threshold}+ verified libraries`}
+                  </p>
+                  <ul className="space-y-1.5">
+                    {benefits.features.map((f, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600">
+                        <span className={`mt-0.5 shrink-0 ${isCurrent ? 'text-violet-500' : isUnlocked ? 'text-emerald-500' : 'text-slate-400'}`}>✓</span>
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )
             })}
           </div>
-        )}
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Help Text */}
+      {/* Referral Link */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Link2 className="h-4 w-4 text-indigo-500" /> Your Referral Link
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-slate-500">
+            Share this link with other library owners. When their library gets verified and approved,
+            it counts as a qualified referral toward your membership level.
+          </p>
+
+          {data.referralUrl ? (
+            <>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                <span className="flex-1 text-sm text-slate-700 font-mono truncate">{data.referralUrl}</span>
+              </div>
+              <div className="flex gap-3">
+                <Button onClick={copyLink} variant="outline" className="flex-1 gap-2">
+                  <Copy className="h-4 w-4" /> Copy Link
+                </Button>
+                <Button onClick={shareLink} className="flex-1 gap-2">
+                  <Share2 className="h-4 w-4" /> Share
+                </Button>
+              </div>
+              <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-xs text-indigo-700">
+                <span className="font-semibold">Your referral code:</span>{' '}
+                <span className="font-mono tracking-wide">{data.referralCode}</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-slate-400 text-sm">Referral code not yet assigned. Please contact support.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Referral History */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="h-4 w-4 text-emerald-500" /> Referral History
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.referralHistory.length === 0 ? (
+            <div className="py-10 text-center">
+              <Users className="h-8 w-8 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-400 text-sm">No referrals yet</p>
+              <p className="text-slate-400 text-xs mt-1">Share your link to get started</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {data.referralHistory.map(entry => {
+                const cfg = REFERRAL_STATUS_CONFIG[entry.referralStatus]
+                const StatusIcon = cfg.icon
+                return (
+                  <div key={entry.id} className="flex items-center gap-3 py-3">
+                    <div className={`rounded-xl ${cfg.bg} p-2 shrink-0`}>
+                      <StatusIcon className={`h-4 w-4 ${cfg.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-900 truncate">{entry.libraryName}</p>
+                      <p className="text-xs text-slate-400">
+                        Registered {new Date(entry.registeredAt).toLocaleDateString('en-IN')}
+                        {entry.qualifiedAt && ` · Qualified ${new Date(entry.qualifiedAt).toLocaleDateString('en-IN')}`}
+                      </p>
+                    </div>
+                    <Badge
+                      variant={
+                        entry.referralStatus === 'QUALIFIED' ? 'active'
+                          : entry.referralStatus === 'PENDING' ? 'pending'
+                          : 'suspended'
+                      }
+                      className="shrink-0 text-xs"
+                    >
+                      {cfg.label}
+                    </Badge>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* How it works */}
       <Card className="bg-slate-50 border-slate-200">
         <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <CreditCard className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
-            <div className="text-sm text-slate-600">
-              <p className="font-medium text-slate-900 mb-1">Need help choosing?</p>
-              <p>
-                All plans include core library management features. Choose based on your library size and number of
-                branches. You can upgrade or downgrade anytime.
-              </p>
-            </div>
-          </div>
+          <p className="font-semibold text-slate-800 text-sm mb-3">How referrals work</p>
+          <ol className="space-y-2 text-xs text-slate-600 list-decimal list-inside">
+            <li>Share your unique referral link with other library owners.</li>
+            <li>They register using your link and submit their library for approval.</li>
+            <li>Once the admin approves their library, the referral is <span className="text-emerald-700 font-medium">Qualified</span>.</li>
+            <li>Every 20 qualified libraries upgrades your membership level.</li>
+            <li>Levels are permanent — you never get downgraded for inactivity.</li>
+          </ol>
         </CardContent>
       </Card>
     </div>

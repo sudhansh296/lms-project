@@ -75,6 +75,20 @@ enum SubscriptionStatus {
   CANCELLED
 }
 
+enum OwnerMembershipLevel {
+  STANDARD
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+}
+
+enum ReferralStatus {
+  PENDING
+  QUALIFIED
+  REJECTED
+  INVALID
+}
+
 enum NotificationType {
   BOOKING_CONFIRMED
   BOOKING_CANCELLED
@@ -127,6 +141,19 @@ model LibraryOwner {
   // Razorpay linked account ID for receiving student payments
   razorpayAccountId   String?  // e.g. "acc_XXXXXXXXXX" — set after owner onboards to Razorpay
   razorpayAccountStatus String? @default("PENDING") // PENDING | ACTIVE | DISABLED
+
+  // ── Referral / Membership ─────────────────────────────────────────────────
+  referralCode        String?  @unique  // e.g. "STUDYLIB-A82K9" — auto-generated on registration
+  referredByOwnerId   String?           // LibraryOwner.id of the referrer (nullable)
+  referredByOwner     LibraryOwner?     @relation("OwnerReferredBy", fields: [referredByOwnerId], references: [id])
+  referredOwners      LibraryOwner[]    @relation("OwnerReferredBy")
+  ownerMembershipLevel OwnerMembershipLevel @default(STANDARD)
+
+  // Referral records where this owner is the referrer
+  referralsGiven      OwnerReferral[]   @relation("ReferrerOwner")
+  // Referral record where this owner is the referred party (at most one)
+  referralReceived    OwnerReferral?    @relation("ReferredOwner")
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -170,6 +197,7 @@ model Library {
   maxBookingMins  Int           @default(480)
   bookingInterval Int           @default(15)
   is24Hours       Boolean       @default(false)
+  basePrice       Float         @default(0)  // seat booking price in INR — replaces MembershipPlan pricing
 
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -392,8 +420,11 @@ model Payment {
   refundId            String?
   refundAmount        Float?
   // Platform commission tracking
-  platformFee         Float?        // Amount kept by platform
+  platformFee         Float?        // Amount kept by platform (5% of base)
   ownerAmount         Float?        // Amount routed to library owner
+  processingFee       Float?        // Razorpay/payment processing fee charged to student
+  gstAmount           Float?        // GST on processing fee charged to student
+  baseAmount          Float?        // Base seat price before any fees
 
   // Polymorphic: either booking or membership
   bookingId           String?       @unique
@@ -548,4 +579,24 @@ model OtpVerification {
 
   @@index([mobile, purpose, userType])
   @@map("otp_verifications")
+}
+
+// ─── Owner Referrals ──────────────────────────────────────────────────────────
+
+model OwnerReferral {
+  id                String         @id @default(cuid())
+  referrerOwnerId   String
+  referrer          LibraryOwner   @relation("ReferrerOwner", fields: [referrerOwnerId], references: [id])
+  referredOwnerId   String         @unique  // each referred owner has at most one referral record
+  referred          LibraryOwner   @relation("ReferredOwner", fields: [referredOwnerId], references: [id])
+  referredLibraryId String?        // set once the referred owner's library is created
+  referralCode      String         // the code that was used at registration
+  status            ReferralStatus @default(PENDING)
+  registeredAt      DateTime       @default(now())
+  qualifiedAt       DateTime?      // set when referred library becomes ACTIVE
+  invalidatedAt     DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@map("owner_referrals")
 }

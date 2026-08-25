@@ -1,6 +1,8 @@
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { subDays, startOfDay, format } from 'date-fns'
+import { checkAnalyticsAccess } from '@/lib/level-limits'
+import type { OwnerMembershipLevel } from '@/lib/referral'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -11,6 +13,19 @@ export async function GET() {
     const session = await requireAuth(['LIBRARY_OWNER', 'LIBRARY_MANAGER'])
     const library = await getOwnerLibrary(session.userId)
     if (!library) return Response.json({ error: 'Library not found' }, { status: 404 })
+
+    // ── Analytics access check ───────────────────────────────────────────────
+    const owner = await prisma.libraryOwner.findUnique({
+      where: { userId: session.userId },
+      select: { ownerMembershipLevel: true },
+    })
+    const accessCheck = checkAnalyticsAccess(
+      (owner?.ownerMembershipLevel ?? 'STANDARD') as OwnerMembershipLevel,
+      'basic'
+    )
+    if (!accessCheck.allowed) {
+      return Response.json({ error: accessCheck.reason, upgradeRequired: true }, { status: 403 })
+    }
 
     const libId = library.id
     const now = new Date()

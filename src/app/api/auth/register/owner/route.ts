@@ -3,6 +3,8 @@ import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
 import { hashPassword, createToken, createAuditLog } from '@/lib/auth'
 import { ownerRegisterSchema } from '@/lib/validations'
+import { generateUniqueReferralCode } from '@/lib/referral'
+import { checkBranchLimit } from '@/lib/level-limits'
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,6 +22,7 @@ export async function POST(request: NextRequest) {
       libraryName, description, libraryPhone, libraryEmail,
       addressLine1, addressLine2, area, landmark, city, state, pincode, country,
       latitude, longitude,
+      referralCode: usedReferralCode,
     } = parsed.data
 
     const existing = await prisma.user.findUnique({ where: { mobile } })
@@ -45,6 +48,19 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Resolve referrer if a referral code was provided
+    let referrerOwner: { id: string } | null = null
+    if (usedReferralCode) {
+      referrerOwner = await prisma.libraryOwner.findUnique({
+        where: { referralCode: usedReferralCode },
+        select: { id: true },
+      })
+      // Invalid code — proceed without referral rather than blocking registration
+    }
+
+    // Generate unique referral code for this new owner
+    const newReferralCode = await generateUniqueReferralCode(prisma)
+
     const passwordHash = await hashPassword(password)
     const trialEnd = new Date(Date.now() + freePlan.trialDays * 24 * 60 * 60 * 1000)
 
@@ -57,6 +73,9 @@ export async function POST(request: NextRequest) {
         role: 'LIBRARY_OWNER',
         libraryOwner: {
           create: {
+            referralCode: newReferralCode,
+            referredByOwnerId: referrerOwner?.id ?? null,
+            ownerMembershipLevel: 'STANDARD',
             libraries: {
               create: {
                 name: libraryName,
@@ -94,6 +113,22 @@ export async function POST(request: NextRequest) {
         },
       },
     })
+
+    // Create referral record if this owner was referred
+    if (referrerOwner && usedReferralCode) {
+      const newOwnerId = user.libraryOwner!.id
+      // Prevent self-referral (shouldn't happen but guard anyway)
+      if (referrerOwner.id !== newOwnerId) {
+        await prisma.ownerReferral.create({
+          data: {
+            referrerOwnerId: referrerOwner.id,
+            referredOwnerId: newOwnerId,
+            referralCode: usedReferralCode,
+            status: 'PENDING',
+          },
+        })
+      }
+    }
 
     // Notify super admins about new library registration
     const superAdmins = await prisma.user.findMany({ where: { role: 'SUPER_ADMIN' } })

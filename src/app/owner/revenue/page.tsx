@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatCard } from '@/components/ui/stat-card'
 import { PageLoading } from '@/components/ui/loading'
+import { UpgradeGate } from '@/components/ui/upgrade-gate'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { formatCurrency } from '@/lib/utils'
 import { CreditCard, TrendingUp } from 'lucide-react'
@@ -20,11 +21,15 @@ interface RevenueData {
   total: number; membershipRevenue: number; bookingRevenue: number
   refunds: number; net: number
   monthly: Array<{ label: string; amount: number }>
+  upgradeRequired?: boolean
+  error?: string
 }
 
 export default function OwnerRevenuePage() {
   const [data, setData] = useState<RevenueData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [locked, setLocked] = useState(false)
+  const [lockMessage, setLockMessage] = useState('')
   const [period, setPeriod] = useState('month')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -35,17 +40,27 @@ export default function OwnerRevenuePage() {
     if (period === 'custom' && from && to) { q.set('from', from); q.set('to', to) }
     const res = await fetch(`/api/owner/revenue?${q}`)
     const d = await res.json()
-    setData(d)
+    if (d.upgradeRequired) {
+      setLocked(true)
+      setLockMessage(d.error ?? 'Revenue reports require Level 2 or higher.')
+    } else {
+      setData(d)
+    }
     setLoading(false)
   }
 
   useEffect(() => { fetchRevenue() }, [period])
 
+  if (loading && !data) return <PageLoading />
+  if (locked) return <UpgradeGate message={lockMessage} />
+  if (loading && !data) return <PageLoading />
+  if (locked) return <UpgradeGate message={lockMessage} />
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Revenue</h1>
-        <p className="text-slate-500 text-sm">Track your library's earnings</p>
+        <p className="text-slate-500 text-sm">Track your library&apos;s earnings</p>
       </div>
 
       {/* Period Tabs */}

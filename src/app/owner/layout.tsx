@@ -6,23 +6,23 @@ import Link from 'next/link'
 import { PageLoading } from '@/components/ui/loading'
 import { useState } from 'react'
 import {
-  LayoutDashboard, Users, Armchair, BookOpen, CreditCard,
-  BarChart3, Bell, LogOut, Settings, Building2, Grid3X3, Menu
+  LayoutDashboard, Users, BookOpen,
+  BarChart3, Bell, LogOut, Settings, Building2, Grid3X3, Menu, Share2, IndianRupee
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const NAV = [
-  { href: '/owner', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/owner/library', label: 'My Library', icon: Building2 },
-  { href: '/owner/seats', label: 'Seat Layout', icon: Grid3X3 },
-  { href: '/owner/bookings', label: 'Bookings', icon: BookOpen },
-  { href: '/owner/students', label: 'Students', icon: Users },
-  { href: '/owner/memberships', label: 'Memberships', icon: Armchair },
-  { href: '/owner/subscription', label: 'Subscription', icon: CreditCard },
-  { href: '/owner/revenue', label: 'Revenue', icon: BarChart3 },
-  { href: '/owner/analytics', label: 'Analytics', icon: BarChart3 },
-  { href: '/owner/notifications', label: 'Notifications', icon: Bell },
-  { href: '/owner/settings', label: 'Settings', icon: Settings },
+  { href: '/owner',              label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/owner/library',      label: 'My Library',   icon: Building2       },
+  { href: '/owner/seats',        label: 'Seat Layout',  icon: Grid3X3         },
+  { href: '/owner/bookings',     label: 'Bookings',     icon: BookOpen        },
+  { href: '/owner/students',     label: 'Students',     icon: Users           },
+  { href: '/owner/memberships',  label: 'Seat Pricing', icon: IndianRupee     },
+  { href: '/owner/subscription', label: 'Referral',     icon: Share2          },
+  { href: '/owner/revenue',      label: 'Revenue',      icon: BarChart3       },
+  { href: '/owner/analytics',    label: 'Analytics',    icon: BarChart3       },
+  { href: '/owner/notifications',label: 'Notifications',icon: Bell            },
+  { href: '/owner/settings',     label: 'Settings',     icon: Settings        },
 ]
 
 export default function OwnerLayout({ children }: { children: React.ReactNode }) {

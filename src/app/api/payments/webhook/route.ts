@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import crypto from 'crypto'
 import prisma from '@/lib/prisma'
+import { calculatePaymentBreakdown } from '@/lib/payment-calc'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET ?? ''
 
     // Verify webhook signature
-    if (webhookSecret) {
+    if (webhookSecret && webhookSecret !== 'your_webhook_secret_from_razorpay_dashboard') {
       const expected = crypto
         .createHmac('sha256', webhookSecret)
         .update(rawBody)
@@ -20,14 +21,14 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: 'Invalid webhook signature' }, { status: 400 })
       }
     } else {
-      console.warn('RAZORPAY_WEBHOOK_SECRET not set — skipping verification')
+      console.warn('RAZORPAY_WEBHOOK_SECRET not configured — skipping signature verification')
     }
 
     const event = JSON.parse(rawBody)
     const eventType: string = event.event
     const payment = event.payload?.payment?.entity
 
-    // ── payment.captured ────────────────────────────────────────────────────
+    // ── payment.captured ──────────────────────────────────────────────────
     if (eventType === 'payment.captured' && payment) {
       const razorpayPaymentId: string = payment.id
       const razorpayOrderId: string = payment.order_id
@@ -40,115 +41,64 @@ export async function POST(request: NextRequest) {
       const existingOwnerPayment = await prisma.ownerPayment.findFirst({
         where: { gatewayPaymentId: razorpayPaymentId, status: 'PAID' },
       })
-
       if (existingStudentPayment || existingOwnerPayment) {
         return Response.json({ received: true, alreadyProcessed: true })
       }
 
-      // Determine payment type from notes
       const paymentType: string = notes.type ?? ''
 
       if (paymentType === 'SUBSCRIPTION') {
-        // Owner subscription payment — confirm via webhook as fallback
+        // Owner subscription payment — keep this handler for backward compat
+        // (owner subscription payments are no longer created by new code but
+        //  may still arrive for historically created orders)
         const ownerPayment = await prisma.ownerPayment.findFirst({
           where: { gatewayOrderId: razorpayOrderId },
         })
         if (ownerPayment) {
           await prisma.ownerPayment.update({
             where: { id: ownerPayment.id },
-            data: { status: 'PAID', gatewayPaymentId: razorpayPaymentId, gatewayOrderId: razorpayOrderId },
+            data: { status: 'PAID', gatewayPaymentId: razorpayPaymentId },
           })
         }
       } else {
-        // Seat booking payment — fallback if browser /pay callback never arrived.
-        // At this point NO Payment row exists yet — find the PENDING Booking by
-        // the Razorpay order notes, confirm it and create Payment + Membership.
+        // Seat booking payment — fallback if the browser /pay callback never arrived.
         const bookingIdFromNotes: string | undefined = notes.bookingId
 
         if (bookingIdFromNotes) {
           const pendingBooking = await prisma.booking.findFirst({
             where: { id: bookingIdFromNotes, status: 'PENDING' },
-            include: {
-              library: {
-                include: {
-                  membershipPlans: {
-                    where: { isActive: true },
-                    orderBy: { price: 'asc' },
-                    take: 1,
-                  },
-                },
-              },
-            },
           })
 
           if (pendingBooking) {
-            const plan = pendingBooking.library.membershipPlans[0] ?? null
+            const breakdown = calculatePaymentBreakdown(pendingBooking.totalAmount)
 
             await prisma.$transaction(async (tx) => {
-              // Create payment first
-              const payment = await tx.payment.create({
+              await tx.payment.create({
                 data: {
                   studentId: pendingBooking.studentId,
                   bookingId: pendingBooking.id,
-                  amount: pendingBooking.totalAmount,
+                  amount: breakdown.totalAmount,
                   status: 'PAID',
                   paymentMethod: 'RAZORPAY',
                   paymentType: 'SEAT_BOOKING',
                   gatewayOrderId: razorpayOrderId,
                   gatewayPaymentId: razorpayPaymentId,
+                  baseAmount: breakdown.baseAmount,
+                  platformFee: breakdown.platformFee,
+                  processingFee: breakdown.processingFee,
+                  gstAmount: breakdown.gstAmount,
+                  ownerAmount: breakdown.ownerAmount,
                 },
               })
 
-              // Confirm booking
               await tx.booking.update({
                 where: { id: pendingBooking.id },
                 data: { status: 'CONFIRMED' },
               })
-
-              // Activate membership
-              if (plan) {
-                const existingMembership = await tx.studentMembership.findFirst({
-                  where: {
-                    studentId: pendingBooking.studentId,
-                    libraryId: pendingBooking.libraryId,
-                    status: 'ACTIVE',
-                    endDate: { gte: new Date() },
-                  },
-                })
-                if (existingMembership) {
-                  const newEnd =
-                    pendingBooking.endTime > existingMembership.endDate
-                      ? pendingBooking.endTime
-                      : existingMembership.endDate
-                  await tx.studentMembership.update({
-                    where: { id: existingMembership.id },
-                    data: { endDate: newEnd },
-                  })
-                } else {
-                  const membership = await tx.studentMembership.create({
-                    data: {
-                      studentId: pendingBooking.studentId,
-                      libraryId: pendingBooking.libraryId,
-                      planId: plan.id,
-                      status: 'ACTIVE',
-                      startDate: pendingBooking.startTime,
-                      endDate: pendingBooking.endTime,
-                      paidAmount: pendingBooking.totalAmount,
-                    },
-                  })
-                  
-                  // Link payment to membership
-                  await tx.payment.update({
-                    where: { id: payment.id },
-                    data: { membershipId: membership.id },
-                  })
-                }
-              }
             })
           }
         } else {
-          // Legacy fallback: if notes.bookingId is missing, try matching by gatewayOrderId
-          // on an already-existing Payment row (old flow compatibility)
+          // Legacy fallback: match by gatewayOrderId on existing Payment row
           const studentPayment = await prisma.payment.findFirst({
             where: { gatewayOrderId: razorpayOrderId, status: { not: 'PAID' } },
             include: { booking: true },
@@ -167,9 +117,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── payment.failed ──────────────────────────────────────────────────────
+    // ── payment.failed ────────────────────────────────────────────────────
     if (eventType === 'payment.failed' && payment) {
-      // Mark any pending payment records as FAILED
       await prisma.payment.updateMany({
         where: { gatewayOrderId: payment.order_id, status: 'PENDING' },
         data: { status: 'FAILED' },
@@ -180,8 +129,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // ── transfer.processed ─────────────────────────────────────────────────
-    // Fired when Razorpay completes transfer to library owner's linked account
+    // ── transfer.processed ────────────────────────────────────────────────
     if (eventType === 'transfer.processed') {
       const transfer = event.payload?.transfer?.entity
       if (transfer) {

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { getMembershipLevel } from '@/lib/referral'
 
 export async function GET(
   _req: NextRequest,
@@ -129,6 +130,57 @@ export async function PATCH(
       },
       include: { owner: { include: { user: true } } },
     })
+
+    // ── Referral qualification ────────────────────────────────────────────────
+    // When a library is APPROVED, check whether its owner was referred by
+    // another owner. If so, mark that referral QUALIFIED and recalculate the
+    // referrer's membership level automatically.
+    if (action === 'APPROVE') {
+      try {
+        const referral = await prisma.ownerReferral.findUnique({
+          where: { referredOwnerId: library.ownerId },
+        })
+
+        if (referral && referral.status === 'PENDING') {
+          // Mark the referral qualified and link the approved library
+          await prisma.ownerReferral.update({
+            where: { id: referral.id },
+            data: {
+              status: 'QUALIFIED',
+              referredLibraryId: id,
+              qualifiedAt: new Date(),
+            },
+          })
+
+          // Count all qualified referrals for the referrer
+          const qualifiedCount = await prisma.ownerReferral.count({
+            where: { referrerOwnerId: referral.referrerOwnerId, status: 'QUALIFIED' },
+          })
+
+          // Compute new level and persist it
+          const newLevel = getMembershipLevel(qualifiedCount)
+          await prisma.libraryOwner.update({
+            where: { id: referral.referrerOwnerId },
+            data: { ownerMembershipLevel: newLevel },
+          })
+        }
+      } catch (referralErr) {
+        // Referral processing must never break the main approval flow
+        console.error('Referral qualification error:', referralErr)
+      }
+    }
+
+    // ── Reject/Invalidate referral when library is rejected ───────────────────
+    if (action === 'REJECT') {
+      try {
+        await prisma.ownerReferral.updateMany({
+          where: { referredOwnerId: library.ownerId, status: 'PENDING' },
+          data: { status: 'REJECTED', invalidatedAt: new Date() },
+        })
+      } catch {
+        // Non-critical — do not propagate
+      }
+    }
 
     const notifTypeMap: Record<string, 'LIBRARY_APPROVED' | 'LIBRARY_REJECTED' | 'LIBRARY_SUSPENDED'> = {
       APPROVE: 'LIBRARY_APPROVED',

@@ -7,10 +7,12 @@ import { Badge } from '@/components/ui/badge'
 import { PageLoading } from '@/components/ui/loading'
 import { EmptyState } from '@/components/ui/empty-state'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
-import { Armchair, Users, BookOpen, CreditCard, Clock, AlertTriangle } from 'lucide-react'
+import { Armchair, Users, BookOpen, Clock, AlertTriangle, Share2, TrendingUp, CheckCircle } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
+import { LEVEL_LABELS, LEVEL_COLORS, LEVEL_BENEFITS } from '@/lib/referral'
+import type { OwnerMembershipLevel } from '@/lib/referral'
 
 interface OwnerStats {
   seats: { total: number; available: number; occupied: number; reserved: number; maintenance: number }
@@ -26,22 +28,24 @@ interface Booking {
   seat: { label: string }
 }
 
-interface Subscription {
-  status: string
-  trialEnd: string | null
-  endDate: string | null
-  plan: {
-    name: string
-    price: number
-    billingCycle: string
-  }
+interface ReferralSummary {
+  ownerMembershipLevel: OwnerMembershipLevel
+  levelLabel: string
+  qualifiedCount: number
+  pendingCount: number
+  nextLevel: OwnerMembershipLevel | null
+  nextLevelLabel: string | null
+  nextLevelThreshold: number
+  needed: number
+  referralUrl: string | null
 }
 
 export default function OwnerDashboard() {
   const { user } = useAuth()
   const [stats, setStats] = useState<OwnerStats | null>(null)
-  const [library, setLibrary] = useState<{ name: string; status: string; city: string; owner: { subscription: Subscription | null } } | null>(null)
+  const [library, setLibrary] = useState<{ name: string; status: string; city: string } | null>(null)
   const [recentBookings, setRecentBookings] = useState<Booking[]>([])
+  const [referral, setReferral] = useState<ReferralSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -49,10 +53,12 @@ export default function OwnerDashboard() {
       fetch('/api/owner/stats').then(r => r.json()),
       fetch('/api/owner/library').then(r => r.json()),
       fetch('/api/owner/bookings?limit=5').then(r => r.json()),
-    ]).then(([s, l, b]) => {
+      fetch('/api/owner/referral').then(r => r.json()),
+    ]).then(([s, l, b, ref]) => {
       setStats(s)
       setLibrary(l.library)
       setRecentBookings(b.bookings ?? [])
+      setReferral(ref)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -60,22 +66,12 @@ export default function OwnerDashboard() {
 
   const isPending = library?.status === 'PENDING_VERIFICATION'
   const isSuspended = library?.status === 'SUSPENDED'
-  const subscription = library?.owner?.subscription
-  const subStatus = subscription?.status ?? 'NONE'
-  
-  // Calculate days remaining
-  const getDaysRemaining = (endDate: string | null): number => {
-    if (!endDate) return 0
-    const end = new Date(endDate)
-    const now = new Date()
-    return Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-  }
-  
-  const trialDays = subscription?.trialEnd ? getDaysRemaining(subscription.trialEnd) : 0
-  const expiryDays = subscription?.endDate ? getDaysRemaining(subscription.endDate) : 0
+  const level = referral?.ownerMembershipLevel ?? 'STANDARD'
+  const benefits = LEVEL_BENEFITS[level]
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Welcome, {user?.name?.split(' ')[0]} 👋</h1>
         <div className="flex items-center gap-2 mt-1">
@@ -91,93 +87,84 @@ export default function OwnerDashboard() {
         </div>
       </div>
 
-      {/* Subscription Status Card - Prominent */}
-      {subscription && (
-        <Card className={`border-2 ${
-          subStatus === 'TRIAL' && trialDays <= 3 ? 'border-amber-300 bg-amber-50/50' :
-          subStatus === 'EXPIRED' ? 'border-red-300 bg-red-50/50' :
-          subStatus === 'ACTIVE' && expiryDays <= 7 ? 'border-amber-300 bg-amber-50/50' :
-          'border-emerald-300 bg-emerald-50/50'
-        }`}>
+      {/* Referral Membership Card */}
+      {referral && (
+        <Card className="border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50">
           <CardContent className="p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <CreditCard className="h-5 w-5 text-slate-600" />
-                  <h3 className="font-bold text-slate-900">Platform Subscription</h3>
-                  <Badge variant={
-                    subStatus === 'ACTIVE' ? 'active' :
-                    subStatus === 'TRIAL' ? 'pending' :
-                    subStatus === 'EXPIRED' ? 'suspended' : 'secondary'
-                  }>
-                    {subStatus}
-                  </Badge>
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              {/* Left — level info + progress */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-3">
+                  <Share2 className="h-5 w-5 text-violet-600 shrink-0" />
+                  <h3 className="font-bold text-slate-900">Referral Membership</h3>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${LEVEL_COLORS[level]}`}>
+                    {LEVEL_LABELS[level]}
+                  </span>
                 </div>
-                
+
+                {/* Current level features */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
+                  {benefits.features.map((f, i) => (
+                    <span key={i} className="flex items-center gap-1 text-xs text-slate-600">
+                      <CheckCircle className="h-3 w-3 text-emerald-500 shrink-0" /> {f}
+                    </span>
+                  ))}
+                </div>
+
                 <div className="grid sm:grid-cols-3 gap-4">
                   <div>
-                    <p className="text-xs text-slate-500 mb-1">Current Plan</p>
-                    <p className="font-bold text-slate-900">{subscription.plan.name}</p>
-                    <p className="text-xs text-slate-600">
-                      {subscription.plan.price === 0 ? 'Free' : `₹${subscription.plan.price}/${subscription.plan.billingCycle === 'MONTHLY' ? 'mo' : 'yr'}`}
-                    </p>
+                    <p className="text-xs text-slate-500 mb-1">Qualified Libraries</p>
+                    <p className="font-bold text-2xl text-slate-900 tabular-nums">{referral.qualifiedCount}</p>
                   </div>
-                  
-                  {subStatus === 'TRIAL' && subscription.trialEnd && (
+                  {referral.nextLevel && (
                     <div>
-                      <p className="text-xs text-slate-500 mb-1">Trial Period</p>
-                      <p className={`font-bold ${trialDays <= 3 ? 'text-amber-600' : 'text-slate-900'}`}>
-                        {trialDays > 0 ? `${trialDays} days left` : 'Expired'}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        Ends {new Date(subscription.trialEnd).toLocaleDateString()}
-                      </p>
+                      <p className="text-xs text-slate-500 mb-1">Next Level</p>
+                      <p className="font-bold text-slate-900">{referral.nextLevelLabel}</p>
+                      <p className="text-xs text-slate-500">{referral.needed} more verified {referral.needed === 1 ? 'library' : 'libraries'} needed</p>
                     </div>
                   )}
-                  
-                  {subStatus === 'ACTIVE' && subscription.endDate && (
+                  {referral.pendingCount > 0 && (
                     <div>
-                      <p className="text-xs text-slate-500 mb-1">Renewal Date</p>
-                      <p className={`font-bold ${expiryDays <= 7 ? 'text-amber-600' : 'text-slate-900'}`}>
-                        {new Date(subscription.endDate).toLocaleDateString()}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {expiryDays > 0 ? `${expiryDays} days remaining` : 'Renew now'}
-                      </p>
-                    </div>
-                  )}
-                  
-                  {subStatus === 'EXPIRED' && (
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Status</p>
-                      <p className="font-bold text-red-600">Subscription Expired</p>
-                      <p className="text-xs text-slate-600">Renew to continue</p>
+                      <p className="text-xs text-slate-500 mb-1">Pending Review</p>
+                      <p className="font-bold text-amber-600 tabular-nums">{referral.pendingCount}</p>
                     </div>
                   )}
                 </div>
+
+                {referral.nextLevel && (
+                  <div className="mt-3 max-w-xs">
+                    <div className="h-1.5 bg-violet-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-violet-500 rounded-full transition-all"
+                        style={{ width: `${Math.min(100, (referral.qualifiedCount / referral.nextLevelThreshold) * 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {referral.qualifiedCount} / {referral.nextLevelThreshold} for {referral.nextLevelLabel}
+                    </p>
+                  </div>
+                )}
               </div>
-              
-              <div className="shrink-0">
+
+              {/* Right — actions */}
+              <div className="shrink-0 flex flex-col gap-2">
                 <Link href="/owner/subscription">
-                  <Button 
-                    size="sm"
-                    variant={
-                      subStatus === 'TRIAL' && trialDays <= 3 ? 'default' :
-                      subStatus === 'EXPIRED' ? 'default' :
-                      'outline'
-                    }
-                    className={
-                      (subStatus === 'TRIAL' && trialDays <= 3) || subStatus === 'EXPIRED'
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700'
-                        : ''
-                    }
-                  >
-                    {subStatus === 'TRIAL' && trialDays <= 3 ? 'Upgrade Now' :
-                     subStatus === 'EXPIRED' ? 'Renew Plan' :
-                     subStatus === 'ACTIVE' && expiryDays <= 7 ? 'Renew' :
-                     'Manage Plan'}
+                  <Button size="sm" variant="outline" className="gap-1.5 w-full">
+                    <TrendingUp className="h-3.5 w-3.5" /> View Details
                   </Button>
                 </Link>
+                {referral.referralUrl && (
+                  <Button
+                    size="sm"
+                    className="gap-1.5 w-full bg-violet-600 hover:bg-violet-700"
+                    onClick={() => {
+                      navigator.clipboard.writeText(referral.referralUrl!)
+                        .catch(() => {})
+                    }}
+                  >
+                    <Share2 className="h-3.5 w-3.5" /> Copy Referral Link
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -204,17 +191,6 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* Expiring memberships alert */}
-      {(stats?.memberships?.expiringSoon ?? 0) > 0 && (
-        <div className="rounded-2xl bg-indigo-50 border border-indigo-200 p-4 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-indigo-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-indigo-800">{stats!.memberships.expiringSoon} memberships expiring soon</p>
-            <p className="text-sm text-indigo-700 mt-0.5">Within the next 5 days.</p>
-          </div>
-        </div>
-      )}
-
       {/* Stats */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard title="Total Seats" value={stats?.seats?.total ?? 0}
@@ -222,21 +198,21 @@ export default function OwnerDashboard() {
           accentColor="bg-violet-500" />
         <StatCard title="Today's Bookings" value={stats?.bookings?.today ?? 0}
           icon={<BookOpen className="h-5 w-5" />} accentColor="bg-indigo-500" />
-        <StatCard title="Active Members" value={stats?.memberships?.active ?? 0}
+        <StatCard title="Active Students" value={stats?.students?.active ?? 0}
           icon={<Users className="h-5 w-5" />} accentColor="bg-emerald-500" />
         <StatCard title="Today's Revenue" value={formatCurrency(stats?.revenue?.today ?? 0)}
           subtitle={`${formatCurrency(stats?.revenue?.monthly ?? 0)} this month`}
-          icon={<CreditCard className="h-5 w-5" />} accentColor="bg-amber-500" />
+          icon={<TrendingUp className="h-5 w-5" />} accentColor="bg-amber-500" />
       </div>
 
       {/* Seat mini-status */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Available', val: stats?.seats?.available ?? 0, color: 'text-emerald-600 bg-emerald-50' },
-          { label: 'Occupied', val: stats?.seats?.occupied ?? 0, color: 'text-indigo-600 bg-indigo-50' },
-          { label: 'Reserved', val: stats?.seats?.reserved ?? 0, color: 'text-violet-600 bg-violet-50' },
+          { label: 'Occupied',  val: stats?.seats?.occupied  ?? 0, color: 'text-indigo-600 bg-indigo-50'  },
+          { label: 'Reserved',  val: stats?.seats?.reserved  ?? 0, color: 'text-violet-600 bg-violet-50'  },
           { label: 'Maintenance', val: stats?.seats?.maintenance ?? 0, color: 'text-amber-600 bg-amber-50' },
-        ].map((s) => (
+        ].map(s => (
           <div key={s.label} className={`rounded-2xl ${s.color} p-4`}>
             <p className="text-xs font-medium opacity-70">{s.label}</p>
             <p className="text-2xl font-bold tabular-nums mt-1">{s.val}</p>
@@ -257,7 +233,7 @@ export default function OwnerDashboard() {
                 description="Bookings will appear here once students start booking seats." />
             ) : (
               <div className="space-y-3">
-                {recentBookings.map((b) => (
+                {recentBookings.map(b => (
                   <div key={b.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
                     <div className="rounded-xl bg-indigo-100 p-2 text-indigo-600 font-bold text-sm w-10 h-10 flex items-center justify-center shrink-0">
                       {b.seat.label}
@@ -282,11 +258,11 @@ export default function OwnerDashboard() {
           <CardContent>
             <div className="grid grid-cols-2 gap-3">
               {[
-                { href: '/owner/seats', label: 'Edit Seat Layout', color: 'bg-violet-50 text-violet-700 hover:bg-violet-100' },
-                { href: '/owner/bookings?action=new', label: 'Add Booking', color: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' },
-                { href: '/owner/memberships', label: 'Membership Plans', color: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' },
-                { href: '/owner/library', label: 'Edit Library Info', color: 'bg-amber-50 text-amber-700 hover:bg-amber-100' },
-              ].map((a) => (
+                { href: '/owner/seats',       label: 'Edit Seat Layout',  color: 'bg-violet-50 text-violet-700 hover:bg-violet-100' },
+                { href: '/owner/bookings',    label: 'View Bookings',     color: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' },
+                { href: '/owner/memberships', label: 'Seat Pricing',      color: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' },
+                { href: '/owner/library',     label: 'Edit Library Info', color: 'bg-amber-50 text-amber-700 hover:bg-amber-100' },
+              ].map(a => (
                 <Link key={a.href} href={a.href}>
                   <div className={`rounded-2xl ${a.color} px-4 py-4 text-sm font-medium text-center cursor-pointer transition-colors`}>
                     {a.label}

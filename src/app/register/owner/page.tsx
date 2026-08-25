@@ -1,7 +1,8 @@
 'use client'
+'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { BookOpen, ChevronRight, ChevronLeft, Check, ShieldCheck } from 'lucide-react'
@@ -37,8 +38,9 @@ const FACILITIES_LIST = [
   { id: 'PREMIUM_SEATS', label: 'Premium Seats' },
 ]
 
-export default function OwnerRegisterPage() {
+function OwnerRegisterPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { refresh } = useAuth()
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
@@ -47,6 +49,8 @@ export default function OwnerRegisterPage() {
   const [sendingOtp, setSendingOtp] = useState(false)
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [otpCooldown, setOtpCooldown] = useState(0)
+  // Capture referral code from URL query param ?ref=STUDYLIB-XXXXX
+  const referralCodeFromUrl = searchParams.get('ref') ?? ''
 
   const [form, setForm] = useState({
     // Owner
@@ -124,6 +128,8 @@ export default function OwnerRegisterPage() {
         country: form.country,
         latitude: form.latitude ? parseFloat(form.latitude) : undefined,
         longitude: form.longitude ? parseFloat(form.longitude) : undefined,
+        // Pass along the referral code captured from the URL
+        referralCode: referralCodeFromUrl || undefined,
       }
 
       const res = await fetch('/api/auth/register/owner', {
@@ -399,6 +405,7 @@ export default function OwnerRegisterPage() {
                 { label: 'Facilities', value: form.facilities.length > 0 ? form.facilities.join(', ') : 'None selected' },
                 { label: 'Hours', value: `${form.hours.filter(h=>h.isOpen).length} days open` },
                 { label: 'Rules', value: `${form.rules.length} rules added` },
+                ...(referralCodeFromUrl ? [{ label: 'Referred by', value: referralCodeFromUrl }] : []),
               ].map((row) => (
                 <div key={row.label} className="flex items-start gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3">
                   <span className="w-24 text-slate-400 shrink-0">{row.label}</span>
@@ -437,5 +444,13 @@ export default function OwnerRegisterPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function OwnerRegisterPage() {
+  return (
+    <Suspense>
+      <OwnerRegisterPageInner />
+    </Suspense>
   )
 }
