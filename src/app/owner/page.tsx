@@ -24,8 +24,12 @@ interface OwnerStats {
 
 interface Booking {
   id: string; status: string; startTime: string; endTime: string
+  totalAmount: number
   student: { user: { name: string; mobile: string } }
   seat: { label: string }
+  plan?: { name: string; price: number } | null
+  planNameSnapshot?: string | null
+  planPriceSnapshot?: number | null
 }
 
 interface ReferralSummary {
@@ -233,20 +237,37 @@ export default function OwnerDashboard() {
                 description="Bookings will appear here once students start booking seats." />
             ) : (
               <div className="space-y-3">
-                {recentBookings.map(b => (
-                  <div key={b.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                    <div className="rounded-xl bg-indigo-100 p-2 text-indigo-600 font-bold text-sm w-10 h-10 flex items-center justify-center shrink-0">
-                      {b.seat.label}
+                {recentBookings.map(b => {
+                  const planName = b.plan?.name || b.planNameSnapshot || 'Direct Booking'
+                  const planPrice = b.plan?.price || b.planPriceSnapshot || 0
+                  return (
+                    <div key={b.id} className="rounded-xl border border-slate-100 p-4 hover:shadow-sm transition-shadow">
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-xl bg-indigo-100 p-2 text-indigo-600 font-bold text-sm w-10 h-10 flex items-center justify-center shrink-0">
+                          {b.seat.label}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="font-medium text-sm text-slate-900">{b.student.user.name}</p>
+                            <Badge variant={b.status === 'CONFIRMED' ? 'active' : b.status === 'CANCELLED' ? 'suspended' : 'secondary'}>
+                              {b.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 mb-1">{formatDateTime(b.startTime)}</p>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-emerald-600 font-medium">{planName}</p>
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-slate-900">{formatCurrency(b.totalAmount)}</p>
+                              {planPrice > 0 && planPrice !== b.totalAmount && (
+                                <p className="text-xs text-slate-400">plan: {formatCurrency(planPrice)}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm text-slate-900">{b.student.user.name}</p>
-                      <p className="text-xs text-slate-500">{formatDateTime(b.startTime)}</p>
-                    </div>
-                    <Badge variant={b.status === 'CONFIRMED' ? 'active' : b.status === 'CANCELLED' ? 'suspended' : 'secondary'}>
-                      {b.status}
-                    </Badge>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </CardContent>
@@ -260,7 +281,7 @@ export default function OwnerDashboard() {
               {[
                 { href: '/owner/seats',       label: 'Edit Seat Layout',  color: 'bg-violet-50 text-violet-700 hover:bg-violet-100' },
                 { href: '/owner/bookings',    label: 'View Bookings',     color: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' },
-                { href: '/owner/memberships', label: 'Seat Pricing',      color: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' },
+                { href: '/owner/memberships', label: 'Pricing Plans',      color: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' },
                 { href: '/owner/library',     label: 'Edit Library Info', color: 'bg-amber-50 text-amber-700 hover:bg-amber-100' },
               ].map(a => (
                 <Link key={a.href} href={a.href}>

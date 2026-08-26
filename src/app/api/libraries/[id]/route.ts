@@ -19,6 +19,13 @@ export async function GET(
         membershipPlans: {
           where: { isActive: true },
           orderBy: { price: 'asc' },
+          select: {
+            id: true, name: true, description: true,
+            dailyMinutes: true, durationValue: true, durationUnit: true,
+            price: true, timeSelectionMode: true,
+            fixedStartTime: true, fixedEndTime: true,
+            allowedDays: true, benefits: true,
+          },
         },
         reviews: {
           include: { student: { include: { user: { select: { name: true } } } } },

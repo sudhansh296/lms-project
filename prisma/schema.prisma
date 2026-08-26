@@ -343,7 +343,7 @@ model Student {
   @@map("students")
 }
 
-// ─── Membership Plans ────────────────────────────────────────────────────────
+// ─── Membership Plans (Seat Pricing Packages) ────────────────────────────────
 
 model MembershipPlan {
   id           String   @id @default(cuid())
@@ -351,14 +351,33 @@ model MembershipPlan {
   library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
   name         String
   description  String?
-  durationDays Int
+
+  // ── Daily access duration ──────────────────────────────────────────────────
+  dailyMinutes    Int    @default(60)   // minutes per day, e.g. 120 = 2 hrs/day
+
+  // ── Plan duration (owner-defined) ─────────────────────────────────────────
+  durationValue   Int    @default(1)    // e.g. 1, 3, 6, 12
+  durationUnit    String @default("MONTH") // DAY | WEEK | MONTH | YEAR
+  durationDays    Int    @default(30)   // kept for backward compat; derived on write
+
+  // ── Pricing ───────────────────────────────────────────────────────────────
   price        Float
-  benefits     String[] // array of benefit strings
+
+  // ── Time selection mode ───────────────────────────────────────────────────
+  timeSelectionMode  String  @default("FLEXIBLE") // FLEXIBLE | FIXED
+  fixedStartTime     String? // "09:00" — only for FIXED plans
+  fixedEndTime       String? // "11:00" — only for FIXED plans
+
+  // ── Allowed days (0=Sun … 6=Sat). Empty = all days ───────────────────────
+  allowedDays  Int[]   @default([0,1,2,3,4,5,6])
+
+  benefits     String[]
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   studentMemberships StudentMembership[]
+  bookings           Booking[]
 
   @@map("membership_plans")
 }
@@ -393,21 +412,63 @@ model Booking {
   student      Student       @relation(fields: [studentId], references: [id])
   seatId       String
   seat         Seat          @relation(fields: [seatId], references: [id])
+
+  // ── Plan reference (nullable for legacy one-off bookings) ─────────────────
+  planId       String?
+  plan         MembershipPlan? @relation(fields: [planId], references: [id])
+
+  // ── Package period (for recurring plans) ─────────────────────────────────
+  startDate         DateTime?     // package start date (date only, time = 00:00 UTC)
+  endDate           DateTime?     // package end date
+  dailyStartTime    String?       // "09:00"
+  dailyEndTime      String?       // "11:00"
+
+  // ── Snapshot: price at time of booking (immutable after creation) ─────────
+  planNameSnapshot      String?
+  planPriceSnapshot     Float?
+  seatExtraSnapshot     Float?
+  dailyMinutesSnapshot  Int?
+  durationSnapshot      String?   // e.g. "3 MONTH"
+
+  // ── Legacy single-occurrence fields (kept for backward compat) ───────────
   bookingDate  DateTime      // date portion
   startTime    DateTime
   endTime      DateTime
+
   status       BookingStatus @default(PENDING)
   totalAmount  Float
   bookingRef   String        @unique @default(cuid())
   notes        String?
-  holdExpiresAt DateTime?    // PENDING hold expires at this time; expired holds don't block seat
+  holdExpiresAt DateTime?
+
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
   payment      Payment?
   attendance   Attendance?
+  occurrences  BookingOccurrence[]
 
   @@map("bookings")
+}
+
+// ─── Booking Occurrences ──────────────────────────────────────────────────────
+// One row per actual daily slot in a recurring plan booking.
+
+model BookingOccurrence {
+  id         String   @id @default(cuid())
+  bookingId  String
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  seatId     String   // denormalised for fast conflict queries
+  date       DateTime // the calendar date (00:00 UTC)
+  startTime  DateTime // full datetime of slot start
+  endTime    DateTime // full datetime of slot end
+  status     String   @default("HELD") // HELD | CONFIRMED | CANCELLED | EXPIRED
+
+  createdAt  DateTime @default(now())
+
+  @@index([seatId, startTime, endTime])
+  @@index([bookingId])
+  @@map("booking_occurrences")
 }
 
 // ─── Payments ────────────────────────────────────────────────────────────────
@@ -432,7 +493,9 @@ model Payment {
   ownerAmount         Float?        // Amount routed to library owner
   processingFee       Float?        // Razorpay/payment processing fee charged to student
   gstAmount           Float?        // GST on processing fee charged to student
-  baseAmount          Float?        // Base seat price before any fees
+  baseAmount          Float?        // planPrice + seatExtraAmount
+  planPrice           Float?        // Plan package price (owner-defined)
+  seatExtraAmount     Float?        // Seat extra charge
 
   // Settlement / Route transfer tracking
   settlementStatus    String?       @default("NOT_REQUIRED") // NOT_REQUIRED | PENDING | PROCESSING | PROCESSED | FAILED | RETRY_REQUIRED | REVERSED

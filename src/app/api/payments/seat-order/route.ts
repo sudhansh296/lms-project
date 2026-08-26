@@ -1,14 +1,14 @@
 /**
  * POST /api/payments/seat-order
  *
- * Creates a PENDING booking + PENDING payment + Razorpay order.
- * All amounts are calculated server-side; the frontend sends only IDs.
+ * Creates a recurring-plan PENDING booking + occurrences + PENDING payment + Razorpay order.
+ * ALL amounts and dates are calculated server-side.
  *
- * Body:    { libraryId, seatId, startTime, endTime }
- * Returns: { orderId, amount(paise), currency, key,
- *             bookingId, bookingRef, breakdown }
+ * Body: { libraryId, planId, seatId, startDate, dailyStartTime }
+ *   - For FIXED plans, dailyStartTime is ignored (taken from plan).
  *
- * Rejects if owner.settlementReady === false (no active payout account).
+ * Returns: { orderId, amount(paise), currency, key, bookingId, bookingRef,
+ *             plan, breakdown, holdExpiresAt }
  */
 import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
@@ -16,9 +16,15 @@ import Razorpay from 'razorpay'
 import prisma from '@/lib/prisma'
 import { calculatePaymentBreakdown, toPaise } from '@/lib/payment-calc'
 import { cancelExpiredBookingHolds } from '@/lib/payment-service'
+import { calcPlanEndDate } from '@/lib/validations'
+import {
+  generateOccurrences,
+  calcEndTimeHHMM,
+  fitsLibraryHours,
+} from '@/lib/booking-occurrences'
 
 const razorpay = new Razorpay({
-  key_id:    process.env.RAZORPAY_KEY_ID    ?? '',
+  key_id:     process.env.RAZORPAY_KEY_ID     ?? '',
   key_secret: process.env.RAZORPAY_KEY_SECRET ?? '',
 })
 
@@ -28,59 +34,36 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(['STUDENT'])
     const body = await request.json()
-    const { libraryId, seatId, startTime, endTime } = body
+    const { libraryId, planId, seatId, startDate, dailyStartTime } = body
 
-    if (!libraryId || !seatId || !startTime || !endTime) {
-      return Response.json({ error: 'Missing required fields: libraryId, seatId, startTime, endTime' }, { status: 400 })
+    if (!libraryId || !planId || !seatId || !startDate) {
+      return Response.json({ error: 'Missing required fields: libraryId, planId, seatId, startDate' }, { status: 400 })
     }
 
-    const start = new Date(startTime)
-    const end   = new Date(endTime)
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return Response.json({ error: 'Invalid date/time format' }, { status: 400 })
-    }
-    if (end <= start) {
-      return Response.json({ error: 'End time must be after start time' }, { status: 400 })
-    }
-    if (start < new Date()) {
-      return Response.json({ error: 'Cannot book in the past' }, { status: 400 })
-    }
-
-    // ── 1. Release expired holds so stale PENDING bookings don't block ────────
+    // ── 1. Release expired holds ──────────────────────────────────────────────
     await cancelExpiredBookingHolds().catch(() => {})
 
     // ── 2. Verify library is ACTIVE ───────────────────────────────────────────
     const library = await prisma.library.findUnique({
       where: { id: libraryId, status: 'ACTIVE' },
-      include: { owner: { select: { id: true, settlementReady: true } } },
+      include: {
+        owner: { select: { id: true, settlementReady: true } },
+        hours: { orderBy: { dayOfWeek: 'asc' } },
+      },
     })
     if (!library) {
       return Response.json({ error: 'Library not found or not active' }, { status: 404 })
     }
 
-    // ── 3. Check owner settlementReady ────────────────────────────────────────
-    // Allow free (₹0) bookings to pass through without settlement
-    const baseSeatPrice = (library.basePrice ?? 0)
-    const willCharge = baseSeatPrice > 0
-
-    if (willCharge && !library.owner.settlementReady) {
-      return Response.json({
-        error: 'OWNER_SETTLEMENT_NOT_ACTIVE',
-        message: 'Online payment is unavailable for this library until settlement verification is complete.',
-      }, { status: 403 })
+    // ── 3. Load and validate plan ─────────────────────────────────────────────
+    const plan = await prisma.membershipPlan.findFirst({
+      where: { id: planId, libraryId, isActive: true },
+    })
+    if (!plan) {
+      return Response.json({ error: 'Pricing plan not found or inactive' }, { status: 404 })
     }
 
-    // ── 4. Duration validation ─────────────────────────────────────────────────
-    const durationMins = (end.getTime() - start.getTime()) / 60000
-    if (durationMins < library.minBookingMins) {
-      return Response.json({ error: `Minimum booking duration is ${library.minBookingMins} minutes` }, { status: 400 })
-    }
-    if (durationMins > library.maxBookingMins) {
-      return Response.json({ error: `Maximum booking duration is ${library.maxBookingMins} minutes` }, { status: 400 })
-    }
-
-    // ── 5. Verify seat ────────────────────────────────────────────────────────
+    // ── 4. Verify seat ────────────────────────────────────────────────────────
     const seat = await prisma.seat.findFirst({ where: { id: seatId, libraryId } })
     if (!seat) {
       return Response.json({ error: 'Seat not found' }, { status: 404 })
@@ -89,60 +72,150 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Seat is not available for booking' }, { status: 409 })
     }
 
-    // ── 6. Seat availability — exclude expired holds ───────────────────────────
+    // ── 5. Determine daily time ───────────────────────────────────────────────
+    const resolvedDailyStart: string =
+      plan.timeSelectionMode === 'FIXED' && plan.fixedStartTime
+        ? plan.fixedStartTime
+        : dailyStartTime
+
+    if (!resolvedDailyStart || !/^\d{2}:\d{2}$/.test(resolvedDailyStart)) {
+      return Response.json({ error: 'dailyStartTime is required for flexible plans (HH:MM)' }, { status: 400 })
+    }
+
+    const resolvedDailyEnd = calcEndTimeHHMM(resolvedDailyStart, plan.dailyMinutes)
+
+    // ── 6. Calculate plan period ──────────────────────────────────────────────
+    const parsedStart = new Date(startDate)
+    if (isNaN(parsedStart.getTime())) {
+      return Response.json({ error: 'Invalid startDate' }, { status: 400 })
+    }
+    parsedStart.setUTCHours(0, 0, 0, 0)
+
+    // Must not be in the past
+    const today = new Date(); today.setUTCHours(0,0,0,0)
+    if (parsedStart < today) {
+      return Response.json({ error: 'Start date cannot be in the past' }, { status: 400 })
+    }
+
+    const endDate = calcPlanEndDate(parsedStart, plan.durationValue, plan.durationUnit as 'DAY'|'WEEK'|'MONTH'|'YEAR')
+    // endDate is exclusive (e.g. 1 month from Sep 1 = Oct 1), subtract 1 day for last occurrence
+    const lastDay = new Date(endDate)
+    lastDay.setUTCDate(lastDay.getUTCDate() - 1)
+
+    // ── 7. Generate occurrences ───────────────────────────────────────────────
+    const occurrences = generateOccurrences(
+      parsedStart,
+      lastDay,
+      resolvedDailyStart,
+      plan.dailyMinutes,
+      plan.allowedDays
+    )
+
+    if (occurrences.length === 0) {
+      return Response.json({ error: 'No valid study days in selected period and allowed days' }, { status: 400 })
+    }
+
+    // ── 8. Validate library hours for each occurrence ─────────────────────────
+    const badDay = occurrences.find(occ => {
+      const dow = occ.date.getUTCDay()
+      return !fitsLibraryHours(resolvedDailyStart, resolvedDailyEnd, library.hours, library.is24Hours, dow)
+    })
+    if (badDay) {
+      return Response.json({
+        error: `Library is not open at ${resolvedDailyStart}–${resolvedDailyEnd} on some days in the plan period. Please choose a different time.`,
+      }, { status: 400 })
+    }
+
+    // ── 9. Check settlementReady (skip for free plans) ────────────────────────
+    const willCharge = plan.price > 0 || (seat.extraPrice ?? 0) > 0
+    if (willCharge && !library.owner.settlementReady) {
+      return Response.json({
+        error: 'OWNER_SETTLEMENT_NOT_ACTIVE',
+        message: 'Online payment is unavailable for this library until settlement verification is complete.',
+      }, { status: 403 })
+    }
+
+    // ── 10. Check seat availability for ALL occurrences ───────────────────────
+    // Only active holds and confirmed/active bookings conflict.
     const now = new Date()
-    const seatConflict = await prisma.booking.findFirst({
+    const existingOccurrences = await prisma.bookingOccurrence.findMany({
       where: {
         seatId,
-        status: { in: ['PENDING', 'CONFIRMED', 'ACTIVE'] },
-        // PENDING is only blocking if holdExpiresAt is in the future (or null = legacy)
-        OR: [
-          { status: { in: ['CONFIRMED', 'ACTIVE'] } },
-          {
-            status: 'PENDING',
+        status: { in: ['HELD', 'CONFIRMED'] },
+        // At least one occurrence overlaps our slot on ANY day in the range
+        startTime: { gte: occurrences[0].startTime },
+        endTime:   { lte: occurrences[occurrences.length - 1].endTime },
+      },
+      select: { startTime: true, endTime: true, bookingId: true },
+    })
+
+    // Also check hold expiry on the parent booking
+    const conflictingBookingIds = new Set(existingOccurrences.map(o => o.bookingId))
+    const activeParents = conflictingBookingIds.size > 0
+      ? await prisma.booking.findMany({
+          where: {
+            id: { in: [...conflictingBookingIds] },
+            status: { in: ['PENDING', 'CONFIRMED', 'ACTIVE'] },
             OR: [
-              { holdExpiresAt: null },
-              { holdExpiresAt: { gt: now } },
+              { status: { in: ['CONFIRMED', 'ACTIVE'] } },
+              { status: 'PENDING', OR: [{ holdExpiresAt: null }, { holdExpiresAt: { gt: now } }] },
             ],
           },
-        ],
-        AND: [{ startTime: { lt: end } }, { endTime: { gt: start } }],
-      },
-    })
-    if (seatConflict) {
-      return Response.json({ error: 'Seat is already booked for this time slot' }, { status: 409 })
+          select: { id: true },
+        })
+      : []
+    const activeParentIds = new Set(activeParents.map(p => p.id))
+
+    for (const occ of occurrences) {
+      const conflict = existingOccurrences.find(
+        ex =>
+          activeParentIds.has(ex.bookingId) &&
+          ex.startTime < occ.endTime &&
+          ex.endTime > occ.startTime
+      )
+      if (conflict) {
+        return Response.json({
+          error: `Seat is already booked on ${occ.date.toISOString().slice(0, 10)} at ${resolvedDailyStart}. Please choose another seat or time.`,
+        }, { status: 409 })
+      }
     }
 
-    // ── 7. Student conflict check ──────────────────────────────────────────────
-    const studentConflict = await prisma.booking.findFirst({
-      where: {
-        studentId: session.id,
-        libraryId,
-        status: { in: ['PENDING', 'CONFIRMED', 'ACTIVE'] },
-        OR: [
-          { status: { in: ['CONFIRMED', 'ACTIVE'] } },
-          { status: 'PENDING', OR: [{ holdExpiresAt: null }, { holdExpiresAt: { gt: now } }] },
-        ],
-        AND: [{ startTime: { lt: end } }, { endTime: { gt: start } }],
-      },
-    })
-    if (studentConflict) {
-      return Response.json({ error: 'You already have a booking overlapping this time' }, { status: 409 })
-    }
-
-    // ── 8. Calculate price (server-side only) ─────────────────────────────────
-    const fullBasePrice = baseSeatPrice + (seat.extraPrice ?? 0)
-    const breakdown = calculatePaymentBreakdown(fullBasePrice)
-
+    // ── 11. Calculate price (server-side, never from frontend) ────────────────
+    const breakdown = calculatePaymentBreakdown(plan.price, seat.extraPrice ?? 0)
     const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000)
 
-    // ── 9. Free booking — confirm immediately ──────────────────────────────────
+    // ── 12. Snapshots (immutable record of what was purchased) ────────────────
+    const durationSnapshot = `${plan.durationValue} ${plan.durationUnit}`
+    const planNameSnapshot      = plan.name
+    const planPriceSnapshot     = plan.price
+    const seatExtraSnapshot     = seat.extraPrice ?? 0
+    const dailyMinutesSnapshot  = plan.dailyMinutes
+
+    // ── 13. Free plan — confirm immediately ───────────────────────────────────
     if (breakdown.totalAmount === 0) {
       const booking = await prisma.booking.create({
         data: {
           libraryId, studentId: session.id, seatId,
-          bookingDate: start, startTime: start, endTime: end,
+          planId,
+          startDate: parsedStart, endDate: lastDay,
+          dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
+          planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
+          dailyMinutesSnapshot, durationSnapshot,
+          bookingDate: parsedStart,
+          startTime: occurrences[0].startTime,
+          endTime:   occurrences[occurrences.length - 1].endTime,
           status: 'CONFIRMED', totalAmount: 0,
+          occurrences: {
+            createMany: {
+              data: occurrences.map(o => ({
+                seatId,
+                date: o.date,
+                startTime: o.startTime,
+                endTime: o.endTime,
+                status: 'CONFIRMED',
+              })),
+            },
+          },
         },
       })
       await prisma.payment.create({
@@ -150,66 +223,78 @@ export async function POST(request: NextRequest) {
           studentId: session.id, bookingId: booking.id,
           amount: 0, status: 'PAID',
           paymentMethod: 'FREE', paymentType: 'SEAT_BOOKING',
-          baseAmount: 0, platformFee: 0, processingFee: 0,
-          gstAmount: 0, ownerAmount: 0,
+          planPrice: 0, seatExtraAmount: 0,
+          baseAmount: 0, platformFee: 0, processingFee: 0, gstAmount: 0, ownerAmount: 0,
           settlementStatus: 'NOT_REQUIRED',
         },
       })
-      return Response.json({ free: true, bookingId: booking.id, bookingRef: booking.bookingRef, breakdown })
+      return Response.json({
+        free: true,
+        bookingId: booking.id, bookingRef: booking.bookingRef,
+        plan: { name: planNameSnapshot, dailyMinutes: plan.dailyMinutes, startDate: parsedStart, endDate: lastDay, dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd },
+        breakdown,
+      })
     }
 
-    // ── 10. Create PENDING booking with hold expiry ───────────────────────────
+    // ── 14. Create PENDING booking + hold occurrences ─────────────────────────
     const booking = await prisma.booking.create({
       data: {
         libraryId, studentId: session.id, seatId,
-        bookingDate: start, startTime: start, endTime: end,
+        planId,
+        startDate: parsedStart, endDate: lastDay,
+        dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
+        planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
+        dailyMinutesSnapshot, durationSnapshot,
+        bookingDate: parsedStart,
+        startTime: occurrences[0].startTime,
+        endTime:   occurrences[occurrences.length - 1].endTime,
         status: 'PENDING',
-        totalAmount: breakdown.baseAmount,  // base price stored; full total on Payment
+        totalAmount: breakdown.baseAmount,
         holdExpiresAt,
+        occurrences: {
+          createMany: {
+            data: occurrences.map(o => ({
+              seatId,
+              date: o.date,
+              startTime: o.startTime,
+              endTime: o.endTime,
+              status: 'HELD',
+            })),
+          },
+        },
       },
     })
 
-    // ── 11. Create Razorpay order ─────────────────────────────────────────────
+    // ── 15. Create Razorpay order ─────────────────────────────────────────────
     let order
     try {
       order = await razorpay.orders.create({
         amount: toPaise(breakdown.totalAmount),
         currency: 'INR',
         receipt: `rcpt_${booking.id.slice(-8)}`,
-        notes: {
-          bookingId: booking.id,
-          studentId: session.id,
-          libraryId,
-          seatId,
-          type: 'SEAT_BOOKING',
-        },
+        notes: { bookingId: booking.id, studentId: session.id, libraryId, planId, seatId, type: 'SEAT_BOOKING' },
       })
-    } catch (razorpayErr: unknown) {
+    } catch (rzErr: unknown) {
+      // Clean up on Razorpay failure
+      await prisma.bookingOccurrence.deleteMany({ where: { bookingId: booking.id } }).catch(() => {})
       await prisma.booking.delete({ where: { id: booking.id } }).catch(() => {})
-      const rzMsg =
-        (razorpayErr as { error?: { description?: string } })?.error?.description ??
-        (razorpayErr instanceof Error ? razorpayErr.message : 'Order creation failed')
-      console.error('Razorpay order error:', razorpayErr)
+      const rzMsg = (rzErr as { error?: { description?: string } })?.error?.description
+        ?? (rzErr instanceof Error ? rzErr.message : 'Order creation failed')
       return Response.json({ error: `Payment gateway error: ${rzMsg}` }, { status: 502 })
     }
 
-    // ── 12. Create PENDING payment record immediately ─────────────────────────
+    // ── 16. Create PENDING Payment record ─────────────────────────────────────
     await prisma.payment.create({
       data: {
-        studentId: session.id,
-        bookingId: booking.id,
-        amount: breakdown.totalAmount,
-        status: 'PENDING',
-        paymentMethod: 'RAZORPAY',
-        paymentType: 'SEAT_BOOKING',
+        studentId: session.id, bookingId: booking.id,
+        amount: breakdown.totalAmount, status: 'PENDING',
+        paymentMethod: 'RAZORPAY', paymentType: 'SEAT_BOOKING',
         gatewayOrderId: order.id,
-        baseAmount: breakdown.baseAmount,
-        platformFee: breakdown.platformFee,
-        processingFee: breakdown.processingFee,
-        gstAmount: breakdown.gstAmount,
+        planPrice: breakdown.planPrice, seatExtraAmount: breakdown.seatExtraAmount,
+        baseAmount: breakdown.baseAmount, platformFee: breakdown.platformFee,
+        processingFee: breakdown.processingFee, gstAmount: breakdown.gstAmount,
         ownerAmount: breakdown.ownerAmount,
-        settlementStatus: 'NOT_REQUIRED',
-        transferAttempts: 0,
+        settlementStatus: 'NOT_REQUIRED', transferAttempts: 0,
       },
     })
 
@@ -220,6 +305,17 @@ export async function POST(request: NextRequest) {
       key:        process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
       bookingId:  booking.id,
       bookingRef: booking.bookingRef,
+      plan: {
+        name: planNameSnapshot,
+        dailyMinutes: plan.dailyMinutes,
+        startDate: parsedStart.toISOString().slice(0,10),
+        endDate:   lastDay.toISOString().slice(0,10),
+        dailyStartTime: resolvedDailyStart,
+        dailyEndTime:   resolvedDailyEnd,
+        durationValue: plan.durationValue,
+        durationUnit: plan.durationUnit,
+        occurrenceCount: occurrences.length,
+      },
       breakdown,
       holdExpiresAt: holdExpiresAt.toISOString(),
     })

@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
         include: {
           student: { include: { user: true } },
           seat: true,
+          plan: { select: { name: true, price: true } },
           payment: true,
           attendance: true,
         },

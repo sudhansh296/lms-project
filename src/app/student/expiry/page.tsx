@@ -9,11 +9,20 @@ import Link from 'next/link'
 
 interface ActiveBooking {
   id: string
+  startDate: string
+  endDate: string
+  dailyStartTime: string
+  dailyEndTime: string
   startTime: string
   endTime: string
   status: string
+  totalAmount: number
   library: { id: string; name: string; city: string }
   seat: { label: string; seatType: string }
+  plan?: { name: string; price: number } | null
+  planNameSnapshot?: string | null
+  planPriceSnapshot?: number | null
+  dailyMinutesSnapshot?: number | null
 }
 
 export default function StudentExpiryPage() {
@@ -26,34 +35,44 @@ export default function StudentExpiryPage() {
       .then(r => r.json())
       .then(data => {
         const bookings = data.bookings ?? []
-        // Find the earliest upcoming or active booking
+        // Find the earliest upcoming or active plan-based booking
         const now = new Date()
         const active = bookings.find((b: ActiveBooking) => 
-          b.status === 'CONFIRMED' && new Date(b.endTime) > now
+          b.status === 'CONFIRMED' && b.endDate && new Date(b.endDate) > now
         )
         setActiveBooking(active ?? null)
       })
       .finally(() => setLoading(false))
   }, [])
 
-  const getRemainingTime = (endTime: string) => {
+  const getRemainingTime = (endDate: string) => {
     const now = new Date()
-    const end = new Date(endTime)
+    const end = new Date(endDate)
     const diff = end.getTime() - now.getTime()
 
     if (diff <= 0) return { text: 'Expired', urgent: true }
 
     const days = Math.floor(diff / (1000 * 60 * 60 * 24))
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
 
-    if (days > 0) {
+    if (days > 7) {
+      return { text: `${days} days remaining`, urgent: false }
+    } else if (days > 0) {
       return { text: `${days} day${days > 1 ? 's' : ''} remaining`, urgent: days < 3 }
     } else if (hours > 0) {
       return { text: `${hours} hour${hours > 1 ? 's' : ''} remaining`, urgent: true }
     } else {
-      return { text: `${minutes} minute${minutes > 1 ? 's' : ''} remaining`, urgent: true }
+      return { text: 'Expires today', urgent: true }
     }
+  }
+
+  const formatDailyTime = (start: string, end: string, minutes?: number) => {
+    if (minutes && minutes > 0) {
+      const h = Math.floor(minutes / 60)
+      const m = minutes % 60
+      return `${h}h ${m > 0 ? `${m}m` : ''} daily (${start} – ${end})`
+    }
+    return `${start} – ${end} daily`
   }
 
   if (loading) return <PageLoading />
@@ -67,13 +86,13 @@ export default function StudentExpiryPage() {
           <div className="rounded-full bg-slate-100 p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
             <AlertCircle className="h-8 w-8 text-slate-400" />
           </div>
-          <p className="font-semibold text-slate-700 mb-2">No Active Booking</p>
+          <p className="font-semibold text-slate-700 mb-2">No Active Study Plan</p>
           <p className="text-sm text-slate-500 mb-6">
-            You don't have any active seat bookings at the moment.
+            You don't have any active study plans at the moment.
           </p>
           <Link href="/student/explore">
             <button className="rounded-xl bg-indigo-600 text-white px-6 py-2.5 text-sm font-medium hover:bg-indigo-700 transition-colors">
-              Book a Seat
+              Choose a Study Plan
             </button>
           </Link>
         </div>
@@ -81,12 +100,14 @@ export default function StudentExpiryPage() {
     )
   }
 
-  const remaining = getRemainingTime(activeBooking.endTime)
-  const isExpired = new Date(activeBooking.endTime) < new Date()
+  const remaining = getRemainingTime(activeBooking.endDate || activeBooking.endTime)
+  const isExpired = new Date(activeBooking.endDate || activeBooking.endTime) < new Date()
+  const planName = activeBooking.plan?.name || activeBooking.planNameSnapshot || 'Study Plan'
+  const planPrice = activeBooking.plan?.price || activeBooking.planPriceSnapshot || 0
 
   return (
     <div className="px-4 py-4 space-y-4">
-      <h1 className="text-xl font-bold text-slate-900">Booking Expiry</h1>
+      <h1 className="text-xl font-bold text-slate-900">Study Plan Status</h1>
 
       {/* Status Banner */}
       <div className={`rounded-2xl p-4 ${
@@ -118,7 +139,7 @@ export default function StudentExpiryPage() {
                   ? 'text-amber-800' 
                   : 'text-emerald-800'
             }`}>
-              {isExpired ? 'Booking Expired' : remaining.text}
+              {isExpired ? 'Plan Expired' : remaining.text}
             </p>
             <p className={`text-xs mt-0.5 ${
               isExpired 
@@ -128,63 +149,70 @@ export default function StudentExpiryPage() {
                   : 'text-emerald-600'
             }`}>
               {isExpired 
-                ? 'Your seat booking has ended' 
+                ? 'Your study plan has ended' 
                 : remaining.urgent 
-                  ? 'Booking expiring soon' 
-                  : 'Your booking is active'
+                  ? 'Plan expiring soon' 
+                  : 'Your study plan is active'
               }
             </p>
           </div>
         </div>
       </div>
 
-      {/* Booking Details Card */}
+      {/* Plan Details Card */}
       <div className="rounded-2xl bg-white border border-slate-100 overflow-hidden shadow-sm">
         <div className="bg-gradient-to-r from-indigo-600 to-violet-600 p-4 text-white">
-          <p className="text-xs opacity-80 mb-1">Current Booking</p>
-          <h2 className="text-lg font-bold">{activeBooking.library.name}</h2>
+          <p className="text-xs opacity-80 mb-1">Active Study Plan</p>
+          <h2 className="text-lg font-bold">{planName}</h2>
           <p className="text-sm opacity-90 flex items-center gap-1 mt-1">
-            <MapPin className="h-3.5 w-3.5" /> {activeBooking.library.city}
+            <MapPin className="h-3.5 w-3.5" /> {activeBooking.library.name} • {activeBooking.library.city}
           </p>
         </div>
 
         <div className="p-4 space-y-3">
           {/* Seat Info */}
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <span className="text-sm text-slate-500">Seat</span>
+            <span className="text-sm text-slate-500">Your Seat</span>
             <div className="text-right">
               <p className="font-bold text-slate-900">{activeBooking.seat.label}</p>
               <p className="text-xs text-slate-500 capitalize">{activeBooking.seat.seatType.toLowerCase()}</p>
             </div>
           </div>
 
-          {/* Start Date */}
+          {/* Daily Schedule */}
+          {activeBooking.dailyStartTime && activeBooking.dailyEndTime && (
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <span className="text-sm text-slate-500 flex items-center gap-1.5">
+                <Clock className="h-4 w-4" /> Daily Schedule
+              </span>
+              <div className="text-right">
+                <p className="font-bold text-slate-900 text-sm">
+                  {formatDailyTime(activeBooking.dailyStartTime, activeBooking.dailyEndTime, activeBooking.dailyMinutesSnapshot)}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Plan Period */}
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <span className="text-sm text-slate-500 flex items-center gap-1.5">
-              <Calendar className="h-4 w-4" /> Booking Start
+              <Calendar className="h-4 w-4" /> Plan Period
             </span>
             <div className="text-right">
-              <p className="font-bold text-slate-900 text-sm">{formatDate(activeBooking.startTime)}</p>
-              <p className="text-xs text-slate-500">{formatTime(activeBooking.startTime)}</p>
+              <p className="font-bold text-slate-900 text-sm">
+                {formatDate(activeBooking.startDate || activeBooking.startTime)} → {formatDate(activeBooking.endDate || activeBooking.endTime)}
+              </p>
             </div>
           </div>
 
-          {/* Expiry Date */}
+          {/* Plan Cost */}
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <span className="text-sm text-slate-500 flex items-center gap-1.5">
-              <Clock className="h-4 w-4" /> Expiry Date
-            </span>
+            <span className="text-sm text-slate-500">Plan Cost</span>
             <div className="text-right">
-              <p className={`font-bold text-sm ${
-                isExpired 
-                  ? 'text-red-600' 
-                  : remaining.urgent 
-                    ? 'text-amber-600' 
-                    : 'text-slate-900'
-              }`}>
-                {formatDate(activeBooking.endTime)}
-              </p>
-              <p className="text-xs text-slate-500">{formatTime(activeBooking.endTime)}</p>
+              <p className="font-bold text-slate-900 text-sm">₹{activeBooking.totalAmount.toFixed(0)}</p>
+              {planPrice > 0 && planPrice !== activeBooking.totalAmount && (
+                <p className="text-xs text-slate-500">base: ₹{planPrice.toFixed(0)}</p>
+              )}
             </div>
           </div>
 
@@ -202,14 +230,14 @@ export default function StudentExpiryPage() {
       <div className="space-y-2">
         <Link href={`/student/library/${activeBooking.library.id}`}>
           <button className="w-full rounded-xl bg-indigo-600 text-white py-3 text-sm font-medium hover:bg-indigo-700 transition-colors">
-            View Library Details
+            View Library & Plans
           </button>
         </Link>
         
         {isExpired && (
           <Link href="/student/explore">
             <button className="w-full rounded-xl border-2 border-indigo-600 text-indigo-600 py-3 text-sm font-medium hover:bg-indigo-50 transition-colors">
-              Book Another Seat
+              Choose New Plan
             </button>
           </Link>
         )}
@@ -220,8 +248,8 @@ export default function StudentExpiryPage() {
         <p className="flex items-start gap-2">
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-slate-400" />
           <span>
-            Your booking serves as your membership. When the booking expires, your access to the library seat ends. 
-            {!isExpired && ' You can book another seat to extend your access.'}
+            Your study plan provides daily seat access during the specified hours. When the plan expires, you'll need to purchase a new plan to continue studying. 
+            {!isExpired && ' You can purchase additional plans or extend your access anytime.'}
           </span>
         </p>
       </div>

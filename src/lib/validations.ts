@@ -83,9 +83,48 @@ export const bookingSchema = z.object({
 export const membershipPlanSchema = z.object({
   name: z.string().min(2, 'Plan name required'),
   description: z.string().optional(),
-  durationDays: z.number().min(1, 'Duration required'),
-  price: z.number().min(0, 'Price required'),
+
+  // Daily access
+  dailyMinutes: z.number().int().min(15, 'Minimum 15 minutes/day').max(1440, 'Max 24 hours/day'),
+
+  // Duration
+  durationValue: z.number().int().min(1, 'Duration must be at least 1'),
+  durationUnit: z.enum(['DAY', 'WEEK', 'MONTH', 'YEAR']),
+
+  // Pricing — owner sets the final price
+  price: z.number().min(0, 'Price must be 0 or more'),
+
+  // Time selection mode
+  timeSelectionMode: z.enum(['FLEXIBLE', 'FIXED']).default('FLEXIBLE'),
+  fixedStartTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
+  fixedEndTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
+
+  // Allowed days of week (0=Sun … 6=Sat)
+  allowedDays: z.array(z.number().int().min(0).max(6)).min(1, 'At least one day required').default([0,1,2,3,4,5,6]),
+
   benefits: z.array(z.string()).default([]),
+}).superRefine((data, ctx) => {
+  if (data.timeSelectionMode === 'FIXED') {
+    if (!data.fixedStartTime) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Start time required for fixed plans', path: ['fixedStartTime'] })
+    }
+    if (!data.fixedEndTime) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'End time required for fixed plans', path: ['fixedEndTime'] })
+    }
+    if (data.fixedStartTime && data.fixedEndTime) {
+      const [sh, sm] = data.fixedStartTime.split(':').map(Number)
+      const [eh, em] = data.fixedEndTime.split(':').map(Number)
+      const startMins = sh * 60 + sm
+      const endMins   = eh * 60 + em
+      if (endMins <= startMins) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'End time must be after start time', path: ['fixedEndTime'] })
+      }
+      const diff = endMins - startMins
+      if (diff !== data.dailyMinutes) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Time slot duration (${diff} min) must match daily minutes (${data.dailyMinutes} min)`, path: ['fixedEndTime'] })
+      }
+    }
+  }
 })
 
 export const reviewSchema = z.object({
@@ -98,3 +137,32 @@ export type StudentRegisterInput = z.infer<typeof studentRegisterSchema>
 export type OwnerRegisterInput = z.infer<typeof ownerRegisterSchema>
 export type BookingInput = z.infer<typeof bookingSchema>
 export type MembershipPlanInput = z.infer<typeof membershipPlanSchema>
+
+/**
+ * Calculate the end date of a plan given a start date, durationValue and durationUnit.
+ * Uses calendar arithmetic for MONTH/YEAR so durations are exact.
+ */
+export function calcPlanEndDate(
+  startDate: Date,
+  durationValue: number,
+  durationUnit: 'DAY' | 'WEEK' | 'MONTH' | 'YEAR'
+): Date {
+  const d = new Date(startDate)
+  switch (durationUnit) {
+    case 'DAY':   d.setDate(d.getDate() + durationValue);           break
+    case 'WEEK':  d.setDate(d.getDate() + durationValue * 7);       break
+    case 'MONTH': d.setMonth(d.getMonth() + durationValue);         break
+    case 'YEAR':  d.setFullYear(d.getFullYear() + durationValue);   break
+  }
+  return d
+}
+
+/** Approximate durationDays for backward-compat durationDays field. */
+export function approxDurationDays(value: number, unit: 'DAY' | 'WEEK' | 'MONTH' | 'YEAR'): number {
+  switch (unit) {
+    case 'DAY':   return value
+    case 'WEEK':  return value * 7
+    case 'MONTH': return value * 30
+    case 'YEAR':  return value * 365
+  }
+}

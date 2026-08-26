@@ -26,7 +26,12 @@ interface Library {
   facilities: Array<{ name: string }>
   hours: Array<{ dayOfWeek: number; isOpen: boolean; openTime?: string; closeTime?: string }>
   rules: Array<{ rule: string; order: number }>
-  membershipPlans: Array<{ id: string; name: string; price: number; durationDays: number; description?: string; benefits: string[] }>
+  membershipPlans: Array<{ 
+    id: string; name: string; description?: string; price: number; 
+    dailyMinutes: number; durationValue: number; durationUnit: string; durationDays: number
+    timeSelectionMode: string; fixedStartTime?: string; fixedEndTime?: string
+    allowedDays: number[]; benefits: string[]; isActive: boolean
+  }>
   reviews: Array<{ rating: number; comment?: string; student: { user: { name: string } } }>
 }
 
@@ -63,7 +68,7 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
     </div>
   )
 
-  const TABS = ['overview', 'seats', 'membership', 'facilities', 'rules', 'reviews']
+  const TABS = ['overview', 'plans', 'seats', 'facilities', 'rules', 'reviews']
 
   // The cheapest active plan — shown as the seat booking price
   const lowestPlan = library.membershipPlans.length > 0
@@ -163,8 +168,8 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
           </div>
         )}
 
-        {/* ── Membership tab — booking IS membership ── */}
-        {activeTab === 'membership' && (
+        {/* ── Study Plans tab — show all owner's pricing packages ── */}
+        {activeTab === 'plans' && (
           <div className="space-y-4">
             {/* Active membership banner */}
             {hasActiveMembership && (
@@ -183,61 +188,103 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
             <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-4 space-y-2">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-indigo-600 shrink-0" />
-                <p className="font-bold text-indigo-900 text-sm">How membership works</p>
+                <p className="font-bold text-indigo-900 text-sm">Study Plans Available</p>
               </div>
               <p className="text-sm text-indigo-800 leading-relaxed">
-                There is no separate membership fee. When you book and pay for a seat, your membership is automatically activated for that booking period.
+                Choose a study plan that fits your schedule. Each plan includes daily seat booking and membership access.
               </p>
-              <ul className="space-y-1.5 pt-1">
-                {[
-                  'Select a seat and time slot',
-                  'Complete payment via Razorpay',
-                  'Seat booked + Membership activated instantly',
-                  'Membership dates match your booking dates',
-                ].map((step, i) => (
-                  <li key={i} className="flex items-center gap-2 text-xs text-indigo-700">
-                    <span className="rounded-full bg-indigo-200 text-indigo-800 font-bold w-4 h-4 flex items-center justify-center shrink-0 text-[10px]">
-                      {i + 1}
-                    </span>
-                    {step}
-                  </li>
-                ))}
-              </ul>
             </div>
 
-            {/* Pricing info */}
-            {lowestPlan && (
-              <div className="rounded-2xl bg-white border border-slate-100 p-4 shadow-sm">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h3 className="font-bold text-slate-900">Seat Booking</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Payment activates membership</p>
+            {/* Study Plans */}
+            {library.membershipPlans.length === 0 ? (
+              <div className="rounded-2xl bg-amber-50 border border-amber-200 p-5 text-center">
+                <BookOpen className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+                <p className="font-semibold text-amber-800 text-sm">No plans available</p>
+                <p className="text-xs text-amber-700 mt-1">This library hasn't set up pricing plans yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm">Available Study Plans</h3>
+                {library.membershipPlans.map(plan => (
+                  <div key={plan.id} className="rounded-2xl bg-white border border-slate-100 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <p className="font-bold text-slate-900">{plan.name}</p>
+                        {plan.description && <p className="text-xs text-slate-500 mt-0.5">{plan.description}</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-lg font-bold text-indigo-600">₹{plan.price.toFixed(0)}</p>
+                        <p className="text-[10px] text-slate-400">+5% platform fee</p>
+                      </div>
+                    </div>
+                    
+                    {/* Plan details */}
+                    <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                      <div className="rounded-lg bg-indigo-50 px-3 py-2">
+                        <p className="text-indigo-500 mb-0.5 flex items-center gap-1"><Clock className="h-3 w-3" /> Daily</p>
+                        <p className="font-bold text-indigo-800">{Math.floor(plan.dailyMinutes / 60)}h {plan.dailyMinutes % 60 > 0 ? `${plan.dailyMinutes % 60}m` : ''}</p>
+                      </div>
+                      <div className="rounded-lg bg-violet-50 px-3 py-2">
+                        <p className="text-violet-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
+                        <p className="font-bold text-violet-800">{plan.durationDays} days</p>
+                      </div>
+                    </div>
+
+                    {/* Time mode */}
+                    <div className="text-xs mb-3">
+                      {plan.timeSelectionMode === 'FIXED' ? (
+                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-full font-medium">
+                          Fixed: {plan.fixedStartTime} – {plan.fixedEndTime}
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full font-medium">
+                          Flexible timing
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Benefits */}
+                    {plan.benefits.length > 0 && (
+                      <div className="space-y-1 mb-4">
+                        {plan.benefits.slice(0, 3).map((b, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <Check className="h-3 w-3 text-emerald-500 shrink-0" /> {b}
+                          </div>
+                        ))}
+                        {plan.benefits.length > 3 && (
+                          <p className="text-xs text-slate-400 pl-4">+{plan.benefits.length - 3} more benefits</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Select button */}
+                    <Button 
+                      className="w-full" 
+                      size="sm" 
+                      onClick={() => router.push(`/student/library/${id}/book?plan=${plan.id}`)}
+                    >
+                      Select This Plan
+                    </Button>
                   </div>
-                  <p className="text-xl font-bold text-indigo-600">
-                    {lowestPlan.price === 0 ? 'Free' : `from ${formatCurrency(lowestPlan.price)}`}
-                  </p>
-                </div>
-                {lowestPlan.benefits.length > 0 && (
-                  <ul className="space-y-1 mb-4">
-                    {lowestPlan.benefits.map((b, i) => (
-                      <li key={i} className="flex items-center gap-2 text-xs text-slate-600">
-                        <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> {b}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                ))}
               </div>
             )}
 
-            {/* CTA — same as seats tab */}
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={() => router.push(`/student/library/${id}/book`)}
-            >
-              <CreditCard className="h-4 w-4" />
-              {hasActiveMembership ? 'Book Another Seat' : 'Book a Seat & Get Membership'}
-            </Button>
+            {/* General CTA if no specific plan selection */}
+            {library.membershipPlans.length > 0 && (
+              <div className="text-center pt-2">
+                <p className="text-xs text-slate-500 mb-3">Or browse all plans while booking</p>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  size="lg"
+                  onClick={() => router.push(`/student/library/${id}/book`)}
+                >
+                  <CreditCard className="h-4 w-4" />
+                  View All Plans & Book Seat
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

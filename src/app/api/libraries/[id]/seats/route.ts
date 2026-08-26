@@ -9,7 +9,7 @@ export async function GET(
     const { id } = await params
     const { searchParams } = new URL(request.url)
     const startTime = searchParams.get('startTime')
-    const endTime = searchParams.get('endTime')
+    const endTime   = searchParams.get('endTime')
 
     const library = await prisma.library.findUnique({ where: { id, status: 'ACTIVE' } })
     if (!library) return Response.json({ error: 'Library not found' }, { status: 404 })
@@ -26,20 +26,64 @@ export async function GET(
 
     if (startTime && endTime) {
       const start = new Date(startTime)
-      const end = new Date(endTime)
+      const end   = new Date(endTime)
+      const now   = new Date()
+
+      // Check conflicts via BookingOccurrences (new recurring system)
+      // AND legacy single-booking conflicts for backward compat
+      const [conflictingOccurrences, legacyConflicts] = await Promise.all([
+        prisma.bookingOccurrence.findMany({
+          where: {
+            status: { in: ['HELD', 'CONFIRMED'] },
+            startTime: { lt: end },
+            endTime:   { gt: start },
+          },
+          include: {
+            booking: {
+              select: {
+                status: true,
+                holdExpiresAt: true,
+              },
+            },
+          },
+          select: {
+            seatId: true,
+            booking: { select: { status: true, holdExpiresAt: true } },
+          },
+        }),
+        prisma.booking.findMany({
+          where: {
+            libraryId: id,
+            planId: null,  // legacy bookings without a plan
+            status: { in: ['CONFIRMED', 'ACTIVE', 'PENDING'] },
+            startTime: { lt: end },
+            endTime:   { gt: start },
+          },
+          select: { seatId: true, status: true, holdExpiresAt: true },
+        }),
+      ])
 
       const bookedSeatIds = new Set<string>()
-      const conflicts = await prisma.booking.findMany({
-        where: {
-          libraryId: id,
-          status: { in: ['CONFIRMED', 'ACTIVE'] },
-          AND: [{ startTime: { lt: end } }, { endTime: { gt: start } }],
-        },
-        select: { seatId: true },
-      })
-      conflicts.forEach((b: { seatId: string }) => bookedSeatIds.add(b.seatId))
 
-      const seatsWithAvailability = seats.map((seat: typeof seats[0]) => ({
+      // From occurrences — skip if parent PENDING hold has expired
+      for (const occ of conflictingOccurrences) {
+        const b = occ.booking as { status: string; holdExpiresAt: Date | null } | null
+        if (!b) continue
+        if (b.status === 'PENDING') {
+          if (!b.holdExpiresAt || b.holdExpiresAt <= now) continue
+        }
+        bookedSeatIds.add(occ.seatId)
+      }
+
+      // From legacy bookings
+      for (const b of legacyConflicts) {
+        if (b.status === 'PENDING') {
+          if (!b.holdExpiresAt || b.holdExpiresAt <= now) continue
+        }
+        bookedSeatIds.add(b.seatId)
+      }
+
+      const seatsWithAvailability = seats.map(seat => ({
         ...seat,
         isAvailableForSlot:
           seat.status !== 'MAINTENANCE' &&
