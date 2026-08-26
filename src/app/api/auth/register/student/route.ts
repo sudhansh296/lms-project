@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
 import { hashPassword, createToken, createAuditLog } from '@/lib/auth'
 import { studentRegisterSchema, normalizeEmail } from '@/lib/validations'
-import { verifyVerificationToken } from '@/lib/otp'
+import { verifyVerificationToken, consumeOtpVerification } from '@/lib/otp'
 
 // FIX 6: Role-aware student registration
 export async function POST(request: NextRequest) {
@@ -42,6 +42,12 @@ export async function POST(request: NextRequest) {
       return Response.json({ 
         error: 'Invalid verification token user type' 
       }, { status: 401 })
+    }
+
+    // P0-1: Check if token was already used (single-use enforcement)
+    const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!)
+    if (!consumeResult.consumed) {
+      return Response.json({ error: consumeResult.error }, { status: 401 })
     }
 
     // FIX 6: Check only for existing STUDENT account with this mobile

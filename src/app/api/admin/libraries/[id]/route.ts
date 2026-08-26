@@ -65,7 +65,7 @@ export async function PATCH(
     const body = await request.json()
     const { action, reason, razorpayAccountId } = body
 
-    // Handle Razorpay account update
+    // P0-6: Handle Razorpay account update with verification
     if (razorpayAccountId !== undefined) {
       const library = await prisma.library.findUnique({
         where: { id },
@@ -81,6 +81,34 @@ export async function PATCH(
         return Response.json({ 
           error: 'Invalid Razorpay account ID. Must start with "acc_"' 
         }, { status: 400 })
+      }
+
+      // P0-6 FIX: Verify account exists with Razorpay before saving
+      if (razorpayAccountId) {
+        try {
+          const { fetchLinkedAccount } = await import('@/lib/razorpay-route')
+          const account = await fetchLinkedAccount(razorpayAccountId)
+          
+          // Verify account is actually a Route account
+          if (account.type !== 'route') {
+            return Response.json({ 
+              error: 'Invalid account type. Must be a Razorpay Route account.' 
+            }, { status: 400 })
+          }
+
+          // Check if account is suspended
+          if (account.status === 'suspended') {
+            return Response.json({ 
+              error: 'This Razorpay account is suspended and cannot be linked.' 
+            }, { status: 400 })
+          }
+        } catch (error) {
+          console.error('[P0-6] Razorpay account verification failed:', error)
+          const msg = error instanceof Error ? error.message : 'Unknown error'
+          return Response.json({ 
+            error: `Razorpay account verification failed: ${msg}` 
+          }, { status: 400 })
+        }
       }
 
       await prisma.libraryOwner.update({
@@ -104,7 +132,7 @@ export async function PATCH(
       return Response.json({ 
         success: true, 
         message: razorpayAccountId 
-          ? 'Razorpay account linked successfully' 
+          ? 'Razorpay account verified and linked successfully' 
           : 'Razorpay account removed'
       })
     }

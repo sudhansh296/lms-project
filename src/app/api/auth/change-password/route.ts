@@ -1,43 +1,31 @@
-/**
- * POST /api/auth/change-password
- * 
- * FIX 21: Real password change endpoint with proper validation
- * Requires authenticated user and current password verification
- */
 import { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 
+// P1-6: Change password for authenticated user
 export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth()
     const body = await request.json()
-    const { currentPassword, newPassword } = body
+    const { currentPassword, newPassword, confirmPassword } = body
 
-    // Validation
-    if (!currentPassword || !newPassword) {
-      return Response.json({ 
-        error: 'Current password and new password are required' 
-      }, { status: 400 })
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return Response.json({ error: 'All fields required' }, { status: 400 })
     }
 
-    if (newPassword.length < 6) {
-      return Response.json({ 
-        error: 'New password must be at least 6 characters long' 
-      }, { status: 400 })
+    if (newPassword !== confirmPassword) {
+      return Response.json({ error: 'New passwords do not match' }, { status: 400 })
     }
 
-    if (currentPassword === newPassword) {
-      return Response.json({ 
-        error: 'New password must be different from current password' 
-      }, { status: 400 })
+    if (newPassword.length < 8) {
+      return Response.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
     }
 
-    // Get user with password
+    // Load user by session userId
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { id: true, passwordHash: true },
+      select: { id: true, passwordHash: true, role: true },
     })
 
     if (!user || !user.passwordHash) {
@@ -45,32 +33,32 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, user.passwordHash)
-    if (!isValidPassword) {
-      return Response.json({ 
-        error: 'Current password is incorrect' 
-      }, { status: 401 })
+    const isValid = await bcrypt.compare(currentPassword, user.passwordHash)
+    if (!isValid) {
+      return Response.json({ error: 'Current password is incorrect' }, { status: 401 })
     }
 
     // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10)
+    const newPasswordHash = await bcrypt.hash(newPassword, 10)
 
     // Update password
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: hashedPassword },
+      data: { passwordHash: newPasswordHash },
     })
 
-    return Response.json({ 
-      success: true,
-      message: 'Password changed successfully' 
+    await createAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: 'PASSWORD_CHANGED',
+      entityType: 'User',
+      entityId: user.id,
     })
+
+    return Response.json({ success: true })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
-    if (msg === 'UNAUTHORIZED') {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    console.error('Change password error:', error)
+    if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -2,9 +2,12 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.NEXTAUTH_SECRET ?? 'fallback-secret-please-set-env'
-)
+// P0-5 FIX: No fallback - fail loudly if NEXTAUTH_SECRET is missing
+const JWT_SECRET_ENV = process.env.NEXTAUTH_SECRET
+if (!JWT_SECRET_ENV || JWT_SECRET_ENV === 'fallback-secret-please-set-env') {
+  throw new Error('NEXTAUTH_SECRET environment variable must be set to a strong secret value')
+}
+const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_ENV)
 
 interface SessionUser {
   id: string

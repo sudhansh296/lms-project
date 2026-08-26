@@ -673,15 +673,16 @@ model AuditLog {
 // ─── OTP Verifications ────────────────────────────────────────────────────────
 
 model OtpVerification {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   mobile      String
-  otpHash     String   // bcrypt hash — never store plaintext
-  purpose     String   // REGISTRATION | FORGOT_PASSWORD
-  userType    String   // STUDENT | LIBRARY_OWNER
+  otpHash     String    // bcrypt hash — never store plaintext
+  purpose     String    // REGISTRATION | FORGOT_PASSWORD
+  userType    String    // STUDENT | LIBRARY_OWNER
   expiresAt   DateTime
-  attempts    Int      @default(0)
-  verified    Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  attempts    Int       @default(0)
+  verified    Boolean   @default(false)
+  consumedAt  DateTime? // P0-1: Mark when verification token is used for registration
+  createdAt   DateTime  @default(now())
 
   @@index([mobile, purpose, userType])
   @@map("otp_verifications")

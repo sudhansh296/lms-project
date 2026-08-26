@@ -32,6 +32,7 @@ export async function GET(
       // FIX 6: Check full-period availability for recurring bookings
       // The frontend should pass the FULL range: first occurrence start → last occurrence end
       // We check if ANY occurrence in that range conflicts with the seat
+      // P0-2: Only HELD/CONFIRMED occurrences conflict (COMPLETED/CANCELLED/EXPIRED don't block)
       const [conflictingOccurrences, legacyConflicts] = await Promise.all([
         prisma.bookingOccurrence.findMany({
           where: {

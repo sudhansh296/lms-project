@@ -4,7 +4,7 @@ import prisma from '@/lib/prisma'
 import { hashPassword, createToken, createAuditLog } from '@/lib/auth'
 import { ownerRegisterSchema, normalizeEmail } from '@/lib/validations'
 import { generateUniqueReferralCode } from '@/lib/referral'
-import { verifyVerificationToken } from '@/lib/otp'
+import { verifyVerificationToken, consumeOtpVerification } from '@/lib/otp'
 
 // FIX 7, 13-19: Role-aware owner registration with full data persistence
 export async function POST(request: NextRequest) {
@@ -51,6 +51,12 @@ export async function POST(request: NextRequest) {
       return Response.json({ 
         error: 'Invalid verification token user type' 
       }, { status: 401 })
+    }
+
+    // P0-1: Check if token was already used (single-use enforcement)
+    const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!)
+    if (!consumeResult.consumed) {
+      return Response.json({ error: consumeResult.error }, { status: 401 })
     }
 
     // FIX 7: Check only for existing LIBRARY_OWNER account with this mobile

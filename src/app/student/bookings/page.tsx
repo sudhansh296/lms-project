@@ -132,11 +132,18 @@ export default function StudentBookingsPage() {
                     </a>
                   )}
                 </div>
-                {['CONFIRMED', 'PENDING'].includes(b.status) && (
+                {/* P1-4 FIX: Only allow cancel for PENDING (unpaid) bookings */}
+                {b.status === 'PENDING' && (
                   <button onClick={() => setCancelModal(b)}
                     className="text-xs text-red-500 hover:text-red-600 font-medium">
                     Cancel
                   </button>
+                )}
+                {/* Show final sale message for paid bookings */}
+                {['CONFIRMED', 'ACTIVE'].includes(b.status) && (
+                  <p className="text-xs text-slate-500 italic">
+                    Paid bookings are final and cannot be cancelled
+                  </p>
                 )}
               </div>
             </div>

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { verifyOtpRecord, type OtpPurpose, type OtpUserType } from '@/lib/otp'
 
+// P0-4 FIX: Returns verification token on successful OTP verification
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -25,7 +26,12 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: result.error }, { status: 400 })
     }
 
-    return Response.json({ success: true, verified: true })
+    // P0-4: Return verification token for use in registration
+    return Response.json({ 
+      success: true, 
+      verified: true,
+      verificationToken: result.verificationToken 
+    })
   } catch (error) {
     console.error('Verify OTP error:', error)
     return Response.json({ error: 'Internal server error' }, { status: 500 })

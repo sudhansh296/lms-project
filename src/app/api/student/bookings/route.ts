@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
           seat: true,
           plan: { select: { name: true, price: true } },
           payment: true,
-          attendance: true,
+          attendances: true, // P0-1: Changed to one-to-many
         },
         orderBy: { startTime: 'desc' },
         skip,

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
           seat: true,
           plan: { select: { name: true, price: true } },
           payment: true,
-          attendance: true,
+          attendances: true, // P0-1: Changed to one-to-many
         },
         orderBy: { startTime: 'desc' },
         skip,
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Owner manual booking creation
+// P0-7: Owner manual booking creation - secured against fake Razorpay payments
 export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(['LIBRARY_OWNER', 'LIBRARY_MANAGER', 'LIBRARY_STAFF'])
@@ -68,6 +68,34 @@ export async function POST(request: NextRequest) {
 
     if (!studentId || !seatId || !startTime || !endTime) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+
+    // P0-7 FIX: Prevent fake Razorpay payments
+    if (paymentMethod && paymentMethod.toUpperCase() === 'RAZORPAY') {
+      return Response.json({ 
+        error: 'Cannot create manual bookings with RAZORPAY payment method. Razorpay payments must go through the payment gateway.' 
+      }, { status: 400 })
+    }
+
+    // Validate manual payment methods
+    const allowedManualMethods = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'OTHER']
+    if (paymentMethod && !allowedManualMethods.includes(paymentMethod.toUpperCase())) {
+      return Response.json({ 
+        error: `Invalid payment method. Allowed: ${allowedManualMethods.join(', ')}` 
+      }, { status: 400 })
+    }
+
+    // P0-6: Validate amount if provided (owner-reported, not authoritative)
+    if (amount !== undefined) {
+      if (typeof amount !== 'number' || amount < 0) {
+        return Response.json({ error: 'Invalid amount' }, { status: 400 })
+      }
+      // Optional: Add maximum amount check to prevent abuse
+      if (amount > 100000) { // 1 lakh rupees max for manual booking
+        return Response.json({ 
+          error: 'Amount too high. For large bookings, use standard payment flow.' 
+        }, { status: 400 })
+      }
     }
 
     const start = new Date(startTime)
@@ -84,18 +112,32 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Seat is not available' }, { status: 409 })
     }
 
-    // Check overlap
-    const overlap = await prisma.booking.findFirst({
-      where: {
-        seatId,
-        status: { in: ['CONFIRMED', 'ACTIVE'] },
-        AND: [
-          { startTime: { lt: end } },
-          { endTime: { gt: start } },
-        ],
-      },
-    })
-    if (overlap) {
+    // P0-2 FIX: Check both legacy bookings and occurrence-level conflicts
+    const [legacyOverlap, occurrenceOverlap] = await Promise.all([
+      // Check legacy bookings (planId = null)
+      prisma.booking.findFirst({
+        where: {
+          seatId,
+          planId: null, // legacy only
+          status: { in: ['CONFIRMED', 'ACTIVE'] },
+          AND: [
+            { startTime: { lt: end } },
+            { endTime: { gt: start } },
+          ],
+        },
+      }),
+      // Check occurrence-level conflicts (recurring bookings)
+      prisma.bookingOccurrence.findFirst({
+        where: {
+          seatId,
+          status: { in: ['HELD', 'CONFIRMED'] },
+          startTime: { lt: end },
+          endTime: { gt: start },
+        },
+      }),
+    ])
+    
+    if (legacyOverlap || occurrenceOverlap) {
       return Response.json({ error: 'Seat is already booked for this time' }, { status: 409 })
     }
 
@@ -125,7 +167,17 @@ export async function POST(request: NextRequest) {
                 studentId,
                 amount: amount ?? 0,
                 status: 'PAID',
-                paymentMethod,
+                paymentMethod: paymentMethod.toUpperCase(),
+                paymentType: 'SEAT_BOOKING',
+                // P0-6: Offline payments never have gateway IDs
+                gatewayOrderId: null,
+                gatewayPaymentId: null,
+                gatewaySignature: null,
+                gatewayTransferId: null,
+                baseAmount: amount ?? 0,
+                // Offline payments don't trigger settlement
+                platformFee: null,
+                ownerAmount: null,
               },
             }
           : undefined,
@@ -140,6 +192,7 @@ export async function POST(request: NextRequest) {
       action: 'BOOKING_CREATED_MANUAL',
       entityType: 'Booking',
       entityId: booking.id,
+      metadata: { paymentMethod, amount },
     })
 
     return Response.json({ booking }, { status: 201 })

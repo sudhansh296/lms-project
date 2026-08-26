@@ -58,11 +58,13 @@ export const ownerRegisterSchema = z.object({
   facilities: z.array(z.string().trim().min(1)).min(1, 'At least one facility required'),
   
   // STEP 5: Hours - at least one open day required (FIX 14)
+  // STEP 5: Hours - all 7 days required, at least 1 open (FIX 14)
+  // P1-2: Allow null times for closed days
   hours: z.array(z.object({
     dayOfWeek: z.number().int().min(0).max(6),
     isOpen: z.boolean(),
-    openTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-    closeTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    openTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+    closeTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   })).length(7, 'Must provide hours for all 7 days')
     .refine(
       (hours) => hours.some(h => h.isOpen),
@@ -70,12 +72,15 @@ export const ownerRegisterSchema = z.object({
     )
     .refine(
       (hours) => hours.every(h => {
+        // Closed days can have null/undefined times
         if (!h.isOpen) return true
+        // Open days must have both times
         if (!h.openTime || !h.closeTime) return false
         const [oh, om] = h.openTime.split(':').map(Number)
         const [ch, cm] = h.closeTime.split(':').map(Number)
         const openMins = oh * 60 + om
         const closeMins = ch * 60 + cm
+        // Reject same-minute or backwards times
         return closeMins > openMins
       }),
       { message: 'All open days must have valid opening hours (close time after open time)' }

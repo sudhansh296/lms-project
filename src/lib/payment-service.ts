@@ -116,6 +116,7 @@ export async function finalizeCapturedBookingPayment(params: {
   })
 
   for (const occ of myOccurrences) {
+    // P0-2: Only HELD/CONFIRMED occurrences conflict (COMPLETED don't block new bookings)
     const conflict = await prisma.bookingOccurrence.findFirst({
       where: {
         seatId: occ.seatId,
@@ -284,15 +285,34 @@ export async function attemptOwnerSettlement(params: {
   // Attempt transfer
   try {
     const transfer = await transferPaymentToOwner(razorpayPaymentId, ownerAccountId, ownerAmountPaise, meta)
-    await prisma.payment.update({
-      where: { id: paymentId },
-      data: { 
-        gatewayTransferId: transfer.id, 
-        settlementStatus: 'PROCESSED', 
-        settledAt: new Date(),
-      },
-    })
-    return { transferId: transfer.id }
+    
+    // P1-1 FIX: Check actual transfer status from Razorpay response
+    // Transfer may be created but not yet processed
+    const transferStatus = transfer.status?.toLowerCase() ?? 'pending'
+    
+    if (transferStatus === 'processed' || transferStatus === 'settled') {
+      // Transfer completed immediately
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { 
+          gatewayTransferId: transfer.id, 
+          settlementStatus: 'PROCESSED', 
+          settledAt: new Date(),
+        },
+      })
+      return { transferId: transfer.id }
+    } else {
+      // Transfer created but pending/processing - wait for webhook
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { 
+          gatewayTransferId: transfer.id, 
+          settlementStatus: 'PROCESSING', // Keep in PROCESSING state
+          transferFailureReason: null,
+        },
+      })
+      return { transferId: transfer.id }
+    }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     await prisma.payment.update({

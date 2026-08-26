@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 10. Check seat availability for ALL occurrences ───────────────────────
-    // Only active holds and confirmed/active bookings conflict.
+    // P0-2 FIX: Only HELD and CONFIRMED occurrences conflict (exclude COMPLETED, CANCELLED, EXPIRED)
     const now = new Date()
     const requestedRangeStart = occurrences[0].startTime
     const requestedRangeEnd = occurrences[occurrences.length - 1].endTime
@@ -169,7 +169,7 @@ export async function POST(request: NextRequest) {
     const existingOccurrences = await prisma.bookingOccurrence.findMany({
       where: {
         seatId,
-        status: { in: ['HELD', 'CONFIRMED'] },
+        status: { in: ['HELD', 'CONFIRMED'] }, // P0-2: COMPLETED/CANCELLED/EXPIRED don't block
         startTime: { lt: requestedRangeEnd },
         endTime: { gt: requestedRangeStart },
       },

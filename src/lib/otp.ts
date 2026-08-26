@@ -74,15 +74,16 @@ export async function createOtpRecord(
 }
 
 /**
- * Verify OTP. Returns { valid, error }.
+ * Verify OTP. Returns { valid, error, verificationToken }.
  * Increments attempt counter. Invalidates on success.
+ * P0-4 FIX: Returns a short-lived verification token on successful OTP verification
  */
 export async function verifyOtpRecord(
   mobile: string,
   otp: string,
   purpose: OtpPurpose,
   userType: OtpUserType
-): Promise<{ valid: boolean; error?: string }> {
+): Promise<{ valid: boolean; error?: string; verificationToken?: string }> {
   const record = await prisma.otpVerification.findFirst({
     where: {
       mobile,
@@ -124,7 +125,140 @@ export async function verifyOtpRecord(
     data: { verified: true, expiresAt: new Date() },
   })
 
-  return { valid: true }
+  // P0-1: Generate verification token with OTP record ID for single-use enforcement
+  const verificationToken = generateVerificationToken(mobile, purpose, userType, record.id)
+
+  return { valid: true, verificationToken }
+}
+
+/**
+ * P0-4: Generate a short-lived verification token
+ * Format: base64(mobile:purpose:userType:otpRecordId:timestamp:signature)
+ * Valid for 5 minutes
+ * P0-1: Include otpRecordId for single-use enforcement
+ */
+function generateVerificationToken(
+  mobile: string,
+  purpose: OtpPurpose,
+  userType: OtpUserType,
+  otpRecordId: string
+): string {
+  const timestamp = Date.now()
+  const secret = process.env.NEXTAUTH_SECRET
+  
+  // P0-5: Throw if secret is missing (should never happen as lib/auth already validates)
+  if (!secret || secret === 'fallback-secret-please-set-env') {
+    throw new Error('NEXTAUTH_SECRET must be configured for OTP verification')
+  }
+  
+  const payload = `${mobile}:${purpose}:${userType}:${otpRecordId}:${timestamp}`
+  
+  // Create HMAC signature
+  const hmac = crypto.createHmac('sha256', secret)
+  hmac.update(payload)
+  const signature = hmac.digest('hex')
+  
+  // Encode token
+  const token = Buffer.from(`${payload}:${signature}`).toString('base64')
+  return token
+}
+
+/**
+ * P0-1: Verify and consume verification token
+ * Returns { valid, mobile, purpose, userType, otpRecordId } or { valid: false, error }
+ */
+export function verifyVerificationToken(
+  token: string
+): { valid: boolean; mobile?: string; purpose?: OtpPurpose; userType?: OtpUserType; otpRecordId?: string; error?: string } {
+  try {
+    // Decode token
+    const decoded = Buffer.from(token, 'base64').toString('utf-8')
+    const parts = decoded.split(':')
+    
+    if (parts.length !== 6) {
+      return { valid: false, error: 'Invalid verification token format' }
+    }
+    
+    const [mobile, purpose, userType, otpRecordId, timestampStr, signature] = parts
+    const timestamp = parseInt(timestampStr, 10)
+    
+    // Check expiry (5 minutes)
+    const now = Date.now()
+    const age = now - timestamp
+    const FIVE_MINUTES = 5 * 60 * 1000
+    
+    if (age > FIVE_MINUTES) {
+      return { valid: false, error: 'Verification token expired. Please verify OTP again.' }
+    }
+    
+    // Verify signature
+    // P0-5: No fallback
+    const secret = process.env.NEXTAUTH_SECRET
+    if (!secret || secret === 'fallback-secret-please-set-env') {
+      return { valid: false, error: 'Server configuration error' }
+    }
+    
+    const payload = `${mobile}:${purpose}:${userType}:${otpRecordId}:${timestamp}`
+    const hmac = crypto.createHmac('sha256', secret)
+    hmac.update(payload)
+    const expectedSignature = hmac.digest('hex')
+    
+    if (signature !== expectedSignature) {
+      return { valid: false, error: 'Invalid verification token signature' }
+    }
+    
+    // Validate purpose and userType
+    if (!['REGISTRATION', 'FORGOT_PASSWORD'].includes(purpose)) {
+      return { valid: false, error: 'Invalid token purpose' }
+    }
+    if (!['STUDENT', 'LIBRARY_OWNER'].includes(userType)) {
+      return { valid: false, error: 'Invalid token user type' }
+    }
+    
+    return {
+      valid: true,
+      mobile,
+      purpose: purpose as OtpPurpose,
+      userType: userType as OtpUserType,
+      otpRecordId,
+    }
+  } catch {
+    return { valid: false, error: 'Failed to verify token' }
+  }
+}
+
+/**
+ * P0-1: Mark OTP verification as consumed (single-use enforcement)
+ */
+export async function consumeOtpVerification(otpRecordId: string): Promise<{ consumed: boolean; error?: string }> {
+  try {
+    const record = await prisma.otpVerification.findUnique({
+      where: { id: otpRecordId },
+      select: { consumedAt: true, verified: true },
+    })
+
+    if (!record) {
+      return { consumed: false, error: 'OTP verification record not found' }
+    }
+
+    if (!record.verified) {
+      return { consumed: false, error: 'OTP was not verified' }
+    }
+
+    if (record.consumedAt) {
+      return { consumed: false, error: 'Verification token has already been used' }
+    }
+
+    // Mark as consumed atomically
+    await prisma.otpVerification.update({
+      where: { id: otpRecordId },
+      data: { consumedAt: new Date() },
+    })
+
+    return { consumed: true }
+  } catch {
+    return { consumed: false, error: 'Failed to consume verification token' }
+  }
 }
 
 /**

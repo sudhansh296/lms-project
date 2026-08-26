@@ -172,13 +172,34 @@ export default function OwnerSettingsPage() {
 
   // ── Change password ────────────────────────────────────────────────────────
   const changePassword = async () => {
+    if (!pwForm.current) { toast.error('Current password required'); return }
     if (pwForm.next !== pwForm.confirm) { toast.error('Passwords do not match'); return }
     if (pwForm.next.length < 8) { toast.error('Minimum 8 characters'); return }
+    
     setSavingPw(true)
-    await new Promise(r => setTimeout(r, 800))
-    toast.success('Password updated')
-    setPwForm({ current: '', next: '', confirm: '' })
-    setSavingPw(false)
+    try {
+      // P1-6 FIX: Call real password change endpoint
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: pwForm.current,
+          newPassword: pwForm.next,
+          confirmPassword: pwForm.confirm,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to update password')
+        return
+      }
+      toast.success('Password updated successfully')
+      setPwForm({ current: '', next: '', confirm: '' })
+    } catch (error) {
+      toast.error('Failed to update password')
+    } finally {
+      setSavingPw(false)
+    }
   }
 
   if (loading) return <PageLoading />
