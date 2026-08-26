@@ -24,34 +24,53 @@ export async function GET() {
       availableSeats,
       occupiedSeats,
       maintenanceSeats,
-      todaysBookings,
+      todaysOccurrences,
       activeStudents,
-      activeMemberships,
+      expiringBookings,
       todayRevenue,
       monthlyRevenue,
-      expiringMemberships,
     ] = await Promise.all([
       prisma.seat.count({ where: { libraryId: libId } }),
       prisma.seat.count({ where: { libraryId: libId, status: 'AVAILABLE' } }),
       prisma.seat.count({ where: { libraryId: libId, status: 'OCCUPIED' } }),
       prisma.seat.count({ where: { libraryId: libId, status: 'MAINTENANCE' } }),
+
+      // Today's check-ins: count CONFIRMED BookingOccurrences for today
+      // (not parent Bookings, which span weeks/months)
+      prisma.bookingOccurrence.count({
+        where: {
+          booking: { libraryId: libId },
+          date: { gte: today, lt: addDays(today, 1) },
+          status: { in: ['CONFIRMED', 'COMPLETED'] },
+        },
+      }),
+
+      // Active students: distinct students with a CONFIRMED booking active today
+      // (seat entitlement is a Booking, not a StudentMembership)
+      prisma.booking.findMany({
+        where: {
+          libraryId: libId,
+          status: { in: ['CONFIRMED', 'ACTIVE'] },
+          endDate: { gte: today },
+        },
+        select: { studentId: true },
+        distinct: ['studentId'],
+      }).then(rows => rows.length),
+
+      // Bookings expiring in next 5 days (entitlement expiry warning)
       prisma.booking.count({
-        where: { libraryId: libId, bookingDate: { gte: today } },
+        where: {
+          libraryId: libId,
+          status: { in: ['CONFIRMED', 'ACTIVE'] },
+          endDate: { gte: new Date(), lt: in5Days },
+        },
       }),
-      prisma.studentMembership.count({
-        where: { libraryId: libId, status: 'ACTIVE' },
-      }),
-      prisma.studentMembership.count({
-        where: { libraryId: libId, status: 'ACTIVE' },
-      }),
+
       prisma.payment.aggregate({
         where: {
           status: 'PAID',
           createdAt: { gte: today },
-          OR: [
-            { booking: { libraryId: libId } },
-            { membership: { libraryId: libId } },
-          ],
+          booking: { libraryId: libId },
         },
         _sum: { ownerAmount: true },
       }),
@@ -59,19 +78,9 @@ export async function GET() {
         where: {
           status: 'PAID',
           createdAt: { gte: monthStart },
-          OR: [
-            { booking: { libraryId: libId } },
-            { membership: { libraryId: libId } },
-          ],
+          booking: { libraryId: libId },
         },
         _sum: { ownerAmount: true },
-      }),
-      prisma.studentMembership.count({
-        where: {
-          libraryId: libId,
-          status: 'ACTIVE',
-          endDate: { gte: new Date(), lt: in5Days }, // FIX 9: endDate is exclusive, use lt
-        },
       }),
     ])
 
@@ -80,14 +89,14 @@ export async function GET() {
         total: totalSeats,
         available: availableSeats,
         occupied: occupiedSeats,
-        reserved: 0, // calculated from active bookings if needed
+        reserved: 0,
         maintenance: maintenanceSeats,
       },
-      bookings: { today: todaysBookings },
+      bookings: { today: todaysOccurrences },
       students: { active: activeStudents },
-      memberships: { active: activeMemberships, expiringSoon: expiringMemberships },
+      memberships: { active: activeStudents, expiringSoon: expiringBookings },
       revenue: {
-        today: todayRevenue._sum.ownerAmount ?? 0,
+        today:   todayRevenue._sum.ownerAmount   ?? 0,
         monthly: monthlyRevenue._sum.ownerAmount ?? 0,
       },
     })

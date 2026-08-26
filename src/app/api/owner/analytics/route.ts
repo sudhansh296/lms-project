@@ -30,66 +30,86 @@ export async function GET() {
     const libId = library.id
     const now = new Date()
 
-    // Daily bookings last 30 days
+    // Daily utilisation last 30 days — count BookingOccurrences, not parent Bookings
+    // A parent Booking spans weeks/months; each Occurrence is one actual study-day
     const dailyBookings = await Promise.all(
       Array.from({ length: 30 }, (_, i) => subDays(now, 29 - i)).map(async (d) => {
         const start = startOfDay(d)
-        const end = new Date(start.getTime() + 86400000)
-        const count = await prisma.booking.count({
-          where: { libraryId: libId, bookingDate: { gte: start, lt: end } },
+        const end   = new Date(start.getTime() + 86_400_000)
+        const count = await prisma.bookingOccurrence.count({
+          where: {
+            booking: { libraryId: libId },
+            date:    { gte: start, lt: end },
+            status:  { in: ['CONFIRMED', 'COMPLETED'] },
+          },
         })
         return { label: format(d, 'dd MMM'), count }
       })
     )
 
-    const totalSeats = await prisma.seat.count({ where: { libraryId: libId } })
+    const totalSeats    = await prisma.seat.count({ where: { libraryId: libId } })
     const occupiedSeats = await prisma.seat.count({ where: { libraryId: libId, status: 'OCCUPIED' } })
     const occupancyRate = totalSeats > 0 ? Math.round((occupiedSeats / totalSeats) * 100) : 0
 
-    // Popular seats
-    const popularSeats = await prisma.booking.groupBy({
-      by: ['seatId'],
-      where: { libraryId: libId, bookingDate: { gte: subDays(now, 30) } },
-      _count: { seatId: true },
-      orderBy: { _count: { seatId: 'desc' } },
-      take: 5,
+    // Popular seats — rank by BookingOccurrence count, not parent Booking count
+    const popularSeats = await prisma.bookingOccurrence.groupBy({
+      by:      ['seatId'],
+      where:   {
+        booking: { libraryId: libId },
+        date:    { gte: subDays(now, 30) },
+        status:  { in: ['CONFIRMED', 'COMPLETED'] },
+      },
+      _count:   { seatId: true },
+      orderBy:  { _count: { seatId: 'desc' } },
+      take:     5,
     })
 
-    const seatIds = popularSeats.map((s: { seatId: string; _count: { seatId: number } }) => s.seatId)
+    const seatIds     = popularSeats.map(s => s.seatId).filter(Boolean) as string[]
     const seatDetails = await prisma.seat.findMany({ where: { id: { in: seatIds } } })
-    const seatMap = Object.fromEntries(seatDetails.map((s: { id: string; label: string }) => [s.id, s.label]))
+    const seatMap     = Object.fromEntries(seatDetails.map(s => [s.id, s.label]))
 
-    const popularSeatsEnriched = popularSeats.map((s: { seatId: string; _count: { seatId: number } }) => ({
-      seatId: s.seatId,
-      label: seatMap[s.seatId] ?? s.seatId,
+    const popularSeatsEnriched = popularSeats.map(s => ({
+      seatId:   s.seatId,
+      label:    seatMap[s.seatId ?? ''] ?? s.seatId ?? 'Unknown',
       bookings: s._count.seatId,
     }))
 
-    // Peak hours
-    const bookingsWithTime = await prisma.booking.findMany({
-      where: { libraryId: libId, bookingDate: { gte: subDays(now, 30) } },
+    // Peak hours — from BookingOccurrence.startTime, not Booking.startTime
+    const occurrencesWithTime = await prisma.bookingOccurrence.findMany({
+      where: {
+        booking: { libraryId: libId },
+        date:    { gte: subDays(now, 30) },
+        status:  { in: ['CONFIRMED', 'COMPLETED'] },
+      },
       select: { startTime: true },
     })
 
     const hourCounts: Record<number, number> = {}
-    bookingsWithTime.forEach((b: { startTime: Date }) => {
-      const h = new Date(b.startTime).getHours()
+    occurrencesWithTime.forEach(o => {
+      const h = new Date(o.startTime).getHours()
       hourCounts[h] = (hourCounts[h] ?? 0) + 1
     })
 
     const peakHours = Array.from({ length: 24 }, (_, h) => ({
-      hour: `${h.toString().padStart(2, '0')}:00`,
+      hour:     `${h.toString().padStart(2, '0')}:00`,
       bookings: hourCounts[h] ?? 0,
     }))
 
-    // Membership growth last 6 months
-    const membershipGrowth = await Promise.all(
+    // Booking growth last 6 months — count new Bookings created each month
+    // StudentMembership is the legacy table; Booking is the entitlement source of truth
+    const bookingGrowth = await Promise.all(
       Array.from({ length: 6 }, (_, i) => {
-        const d = subDays(now, (5 - i) * 30)
-        const start = startOfDay(subDays(d, 30))
-        return prisma.studentMembership
-          .count({ where: { libraryId: libId, createdAt: { gte: start, lte: d } } })
-          .then((count: number) => ({ label: format(d, 'MMM yy'), count }))
+        const periodEnd   = subDays(now, (5 - i) * 30)
+        const periodStart = startOfDay(subDays(periodEnd, 30))
+        return prisma.booking
+          .count({
+            where: {
+              libraryId: libId,
+              createdAt: { gte: periodStart, lte: periodEnd },
+              status:    { in: ['CONFIRMED', 'ACTIVE', 'COMPLETED'] },
+            },
+          })
+          .then(count => ({ label: format(periodEnd, 'MMM yy'), count }))
       })
     )
 
@@ -98,9 +118,9 @@ export async function GET() {
       totalSeats,
       occupiedSeats,
       dailyBookings,
-      popularSeats: popularSeatsEnriched,
+      popularSeats:   popularSeatsEnriched,
       peakHours,
-      membershipGrowth,
+      membershipGrowth: bookingGrowth, // key kept for frontend compatibility
     })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
