@@ -49,8 +49,8 @@ export async function GET(request: NextRequest) {
           facilities: true,
           hours: true,
           membershipPlans: {
-            where: { isActive: true },
-            orderBy: { price: 'asc' },
+            where: { isActive: true, pricingModel: 'MONTHLY_RATE' },
+            orderBy: { monthlyPrice: 'asc' },
             take: 1,
           },
           _count: { select: { seats: true, reviews: true } },
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
           : null
 
       const isOpen = isLibraryOpen(lib.hours, lib.is24Hours)
-      const lowestPrice = lib.membershipPlans[0]?.price ?? null
+      const lowestPrice = lib.membershipPlans[0]?.monthlyPrice ?? null
       const coverPhoto = lib.photos[0]?.url ?? null
 
       return {

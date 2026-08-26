@@ -9,37 +9,22 @@ const razorpay = new Razorpay({
 })
 
 export async function POST(request: NextRequest) {
+  // DISABLED: This route accepts arbitrary amounts from frontend.
+  // Students MUST use: POST /api/payments/seat-order (calculates pricing server-side)
+  // Owner subscriptions are NOT part of the current business model.
+  
   try {
-    // Both students (seat booking) and library owners (subscription) create orders
     const session = await requireAuth(['STUDENT', 'LIBRARY_OWNER'])
-    const body = await request.json()
-    const { amount, currency = 'INR', receipt, notes } = body
-
-    if (!amount || amount <= 0) {
-      return Response.json({ error: 'Invalid amount' }, { status: 400 })
-    }
-
-    const order = await razorpay.orders.create({
-      amount: Math.round(amount * 100), // paise
-      currency,
-      receipt: receipt ?? `rcpt_${Date.now()}`,
-      notes: {
-        userId: session.userId,
-        role: session.role,
-        ...notes,
-      },
-    })
-
-    return Response.json({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-    })
+    
+    return Response.json({ 
+      error: 'This endpoint is disabled. Use the secure booking flow.',
+      details: session.role === 'STUDENT' 
+        ? 'Students: Use POST /api/payments/seat-order for bookings'
+        : 'Owner subscriptions are not part of the current pricing model'
+    }, { status: 410 }) // 410 Gone
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    console.error('Razorpay order error:', error)
-    return Response.json({ error: 'Payment initialization failed' }, { status: 500 })
+    return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -119,16 +119,15 @@ export default function OwnerPricingPlansPage() {
   const save = async () => {
     const isMonthlyRate = form.pricingModel === 'MONTHLY_RATE'
     
-    if (!form.name.trim() && isMonthlyRate) {
-      // Auto-generate name for monthly rate plans
+    // Auto-generate name BEFORE validation (don't rely on async setState)
+    let resolvedName = form.name.trim()
+    if (!resolvedName && isMonthlyRate) {
       const h = Math.floor(form.dailyMinutes / 60)
       const m = form.dailyMinutes % 60
-      const tempForm: typeof form = { ...form }
-      tempForm.name = m > 0 ? `${h}h ${m}m / Day` : `${h} Hour${h > 1 ? 's' : ''} / Day`
-      setForm(tempForm)
+      resolvedName = m > 0 ? `${h}h ${m}m / Day` : `${h} Hour${h > 1 ? 's' : ''} / Day`
     }
     
-    if (!form.name.trim()) { toast.error('Plan name required'); return }
+    if (!resolvedName) { toast.error('Plan name required'); return }
     if (form.dailyMinutes < 15) { toast.error('Min 15 minutes/day'); return }
     if (form.allowedDays.length === 0) { toast.error('Select at least one day'); return }
     
@@ -151,7 +150,7 @@ export default function OwnerPricingPlansPage() {
     setSaving(true)
     try {
       const payload: Record<string, unknown> = {
-        name: form.name,
+        name: resolvedName, // Use resolved name instead of form.name
         description: form.description,
         pricingModel: form.pricingModel,
         dailyMinutes: form.dailyMinutes,
@@ -264,11 +263,11 @@ export default function OwnerPricingPlansPage() {
               </div>
               {(form.monthlyPrice ?? 0) > 0 && (
                 <div className="text-xs text-slate-500 mt-2 space-y-1">
-                  <p className="font-medium text-slate-700">Example Breakdown (1 month):</p>
-                  <p>Library charge: ₹{(form.monthlyPrice ?? 0).toFixed(2)}</p>
-                  <p>Platform commission (5%): ₹{((form.monthlyPrice ?? 0) * 0.05).toFixed(2)} <span className="text-amber-600">(deducted from you)</span></p>
-                  <p className="text-emerald-600 font-medium">You receive: ₹{((form.monthlyPrice ?? 0) * 0.95).toFixed(2)}</p>
-                  <p className="text-xs text-slate-400 mt-1">Student pays: ~₹{((form.monthlyPrice ?? 0) * 1.0236).toFixed(2)} (includes gateway fee)</p>
+                  <p className="font-medium text-slate-700">Revenue Breakdown (per month):</p>
+                  <p>Monthly Rate: ₹{(form.monthlyPrice ?? 0).toFixed(2)}</p>
+                  <p>Platform Commission (5%): ₹{((form.monthlyPrice ?? 0) * 0.05).toFixed(2)} <span className="text-amber-600">(deducted from you)</span></p>
+                  <p className="text-emerald-600 font-medium">You Receive: ₹{((form.monthlyPrice ?? 0) * 0.95).toFixed(2)}/month</p>
+                  <p className="text-xs text-slate-400 mt-1.5">Applicable online payment charges calculated at checkout</p>
                 </div>
               )}
             </div>
@@ -407,7 +406,11 @@ export default function OwnerPricingPlansPage() {
                 </div>
                 <div className="rounded-lg bg-violet-50 px-3 py-2">
                   <p className="text-violet-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
-                  <p className="font-bold text-violet-800">{plan.durationValue} {plan.durationUnit && UNIT_LABELS[plan.durationUnit] ? UNIT_LABELS[plan.durationUnit] : ''}</p>
+                  {plan.pricingModel === 'MONTHLY_RATE' ? (
+                    <p className="font-bold text-violet-800">Student chooses</p>
+                  ) : (
+                    <p className="font-bold text-violet-800">{plan.durationValue} {plan.durationUnit && UNIT_LABELS[plan.durationUnit] ? UNIT_LABELS[plan.durationUnit] : ''}</p>
+                  )}
                 </div>
               </div>
 

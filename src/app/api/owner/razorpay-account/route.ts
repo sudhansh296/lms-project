@@ -18,29 +18,21 @@ export async function GET() {
   }
 }
 
-// POST — save Razorpay linked account ID
-// Owner gets this from their Razorpay dashboard after creating a linked account
+// POST — DISABLED: Owner must never manually enter account IDs
+// The secure Route onboarding flow creates accounts via the platform:
+// 1. POST /api/owner/settlement/onboard (creates stakeholder)
+// 2. POST /api/owner/settlement/bank (creates product/account)
+// 3. GET /api/owner/settlement/sync (fetches status)
+//
+// This ensures proper KYC, platform ownership, and compliance.
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(['LIBRARY_OWNER'])
-    const { razorpayAccountId } = await request.json()
-
-    if (!razorpayAccountId || !razorpayAccountId.startsWith('acc_')) {
-      return Response.json({
-        error: 'Invalid Razorpay account ID. It should start with "acc_"',
-      }, { status: 400 })
-    }
-
-    const owner = await prisma.libraryOwner.update({
-      where: { userId: session.userId },
-      data: {
-        razorpayAccountId,
-        razorpayAccountStatus: 'ACTIVE',
-      },
-      select: { razorpayAccountId: true, razorpayAccountStatus: true },
-    })
-
-    return Response.json({ success: true, owner })
+    await requireAuth(['LIBRARY_OWNER'])
+    
+    return Response.json({
+      error: 'This endpoint is disabled for security.',
+      details: 'Use the settlement onboarding flow: /api/owner/settlement/onboard and /api/owner/settlement/bank',
+    }, { status: 410 }) // 410 Gone
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

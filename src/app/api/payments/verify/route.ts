@@ -4,39 +4,27 @@ import crypto from 'crypto'
 import prisma from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
+  // DISABLED: This route only verifies HMAC signature but does NOT perform:
+  // - Razorpay payment status check (captured vs pending)
+  // - Amount/currency verification
+  // - Seat availability confirmation
+  // - Route settlement to owner
+  // - BookingOccurrence confirmation
+  // - Proper idempotency
+  //
+  // Students MUST use: POST /api/student/bookings/:id/pay
+  // Which calls the secure finalizeCapturedBookingPayment() from payment-service.ts
+  
   try {
     await requireAuth(['STUDENT'])
-    const body = await request.json()
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, paymentId } = body
-
-    // Verify signature
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET ?? '')
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-      .digest('hex')
-
-    if (expectedSignature !== razorpaySignature) {
-      return Response.json({ error: 'Payment verification failed' }, { status: 400 })
-    }
-
-    // Update payment record
-    if (paymentId) {
-      await prisma.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: 'PAID',
-          gatewayOrderId: razorpayOrderId,
-          gatewayPaymentId: razorpayPaymentId,
-          gatewaySignature: razorpaySignature,
-        },
-      })
-    }
-
-    return Response.json({ success: true, verified: true })
+    
+    return Response.json({ 
+      error: 'This endpoint is disabled. Payment verification happens automatically.',
+      details: 'The booking flow handles payment verification securely through the webhook and payment finalizer'
+    }, { status: 410 }) // 410 Gone
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    console.error('Payment verify error:', error)
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
