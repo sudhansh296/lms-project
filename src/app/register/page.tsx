@@ -31,9 +31,22 @@ export default function StudentRegisterPage() {
   // ── Stage 1: Validate form & send OTP ──────────────────────────────────────
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return }
+    
+    // P08: Validate all required fields
+    if (!form.name.trim()) { toast.error('Name is required'); return }
+    if (form.name.trim().length < 2) { toast.error('Name must be at least 2 characters'); return }
     if (form.mobile.length !== 10) { toast.error('Enter a valid 10-digit mobile number'); return }
-    if (form.password.length < 6) { toast.error('Password must be at least 6 characters'); return }
+    
+    // P09: Email is now REQUIRED
+    if (!form.email.trim()) { toast.error('Email is required'); return }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(form.email)) { toast.error('Enter a valid email address'); return }
+    
+    // P10: Password minimum 8 characters (increased from 6)
+    if (form.password.length < 8) { toast.error('Password must be at least 8 characters'); return }
+    
+    // P11: Confirm password validation
+    if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return }
 
     setSending(true)
     try {
@@ -80,10 +93,12 @@ export default function StudentRegisterPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: form.name,
+          name: form.name.trim(),
           mobile: form.mobile,
-          email: form.email || undefined,
+          email: form.email.trim().toLowerCase(),
           password: form.password,
+          confirmPassword: form.confirmPassword,
+          verificationToken: otpData.verificationToken, // ✅ Add OTP proof token
         }),
       })
       const regData = await regRes.json()
@@ -141,7 +156,7 @@ export default function StudentRegisterPage() {
               {[
                 { name: 'name', label: 'Full Name', type: 'text', placeholder: 'Your full name', required: true },
                 { name: 'mobile', label: 'Mobile Number', type: 'tel', placeholder: '10-digit number', required: true },
-                { name: 'email', label: 'Email (optional)', type: 'email', placeholder: 'your@email.com', required: false },
+                { name: 'email', label: 'Email', type: 'email', placeholder: 'your@email.com', required: true },
               ].map((field) => (
                 <div key={field.name}>
                   <label className="block text-sm font-medium text-slate-300 mb-1.5">{field.label}</label>
@@ -160,7 +175,7 @@ export default function StudentRegisterPage() {
                 <label className="block text-sm font-medium text-slate-300 mb-1.5">Password</label>
                 <div className="relative">
                   <input name="password" type={showPwd ? 'text' : 'password'} value={form.password}
-                    onChange={handleChange} placeholder="Min 6 characters" required className={`${inputCls} pr-10`} />
+                    onChange={handleChange} placeholder="Min 8 characters" required minLength={8} className={`${inputCls} pr-10`} />
                   <button type="button" onClick={() => setShowPwd(!showPwd)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
                     {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -170,7 +185,7 @@ export default function StudentRegisterPage() {
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1.5">Confirm Password</label>
                 <input name="confirmPassword" type="password" value={form.confirmPassword}
-                  onChange={handleChange} placeholder="Repeat password" required className={inputCls} />
+                  onChange={handleChange} placeholder="Repeat password" required minLength={8} className={inputCls} />
               </div>
               <Button type="submit" className="w-full mt-2" size="lg" loading={sending}>
                 Send OTP to Verify Mobile

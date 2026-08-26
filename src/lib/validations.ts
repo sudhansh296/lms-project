@@ -1,41 +1,95 @@
 import { z } from 'zod'
 
+// FIX 3-5: Login with role context
 export const loginSchema = z.object({
   mobile: z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
+  loginAs: z.enum(['STUDENT', 'OWNER', 'ADMIN']),
 })
 
+// Helper to normalize email
+const normalizedEmail = z.string()
+  .trim()
+  .toLowerCase()
+  .email('Invalid email format')
+
+// FIX 11: Student registration - all fields mandatory
 export const studentRegisterSchema = z.object({
   mobile: z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number'),
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  name: z.string().trim().min(2, 'Name must be at least 2 characters'),
+  email: normalizedEmail, // FIX 11: Email is now required
+  password: z.string().min(8, 'Password must be at least 8 characters'), // FIX 11: Increased to 8
+  confirmPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  verificationToken: z.string().min(1, 'Verification token required'),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
 })
 
+// FIX 12-19: Owner registration - comprehensive validation with facilities/hours/rules
 export const ownerRegisterSchema = z.object({
-  // Owner details
-  name: z.string().min(2, 'Name required'),
+  // STEP 1: Owner details - all required
+  name: z.string().trim().min(2, 'Name must be at least 2 characters'),
   mobile: z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number'),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
+  email: normalizedEmail, // Required
   password: z.string().min(8, 'Password must be at least 8 characters'),
-  // Library details
-  libraryName: z.string().min(2, 'Library name required'),
-  description: z.string().optional(),
-  libraryPhone: z.string().optional(),
-  libraryEmail: z.string().email().optional().or(z.literal('')),
-  // Location
-  addressLine1: z.string().min(3, 'Address required'),
+  confirmPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  verificationToken: z.string().min(1, 'Verification token required'),
+  
+  // STEP 2: Library details - all required
+  libraryName: z.string().trim().min(2, 'Library name required'),
+  description: z.string().trim().min(10, 'Description must be at least 10 characters'),
+  libraryPhone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid phone number'),
+  libraryEmail: normalizedEmail,
+  
+  // STEP 3: Location - required fields
+  addressLine1: z.string().trim().min(3, 'Address required'),
   addressLine2: z.string().optional(),
-  area: z.string().optional(),
+  area: z.string().trim().min(2, 'Area/Locality required'),
   landmark: z.string().optional(),
-  city: z.string().min(2, 'City required'),
-  state: z.string().min(2, 'State required'),
-  pincode: z.string().regex(/^\d{6}$/, 'Invalid pincode'),
+  city: z.string().trim().min(2, 'City required'),
+  state: z.string().trim().min(2, 'State required'),
+  pincode: z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits'),
   country: z.string().default('India'),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
-  // Optional referral code used during registration
+  
+  // STEP 4: Facilities - at least one required (FIX 13)
+  facilities: z.array(z.string().trim().min(1)).min(1, 'At least one facility required'),
+  
+  // STEP 5: Hours - at least one open day required (FIX 14)
+  hours: z.array(z.object({
+    dayOfWeek: z.number().int().min(0).max(6),
+    isOpen: z.boolean(),
+    openTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    closeTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  })).length(7, 'Must provide hours for all 7 days')
+    .refine(
+      (hours) => hours.some(h => h.isOpen),
+      { message: 'At least one day must be open' }
+    )
+    .refine(
+      (hours) => hours.every(h => {
+        if (!h.isOpen) return true
+        if (!h.openTime || !h.closeTime) return false
+        const [oh, om] = h.openTime.split(':').map(Number)
+        const [ch, cm] = h.closeTime.split(':').map(Number)
+        const openMins = oh * 60 + om
+        const closeMins = ch * 60 + cm
+        return closeMins > openMins
+      }),
+      { message: 'All open days must have valid opening hours (close time after open time)' }
+    ),
+  
+  // STEP 6: Rules - at least one required (FIX 15)
+  rules: z.array(z.string().trim().min(1, 'Rule cannot be empty'))
+    .min(1, 'At least one library rule required'),
+  
+  // Optional referral code
   referralCode: z.string().optional(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
 })
 
 export const libraryUpdateSchema = z.object({
@@ -256,6 +310,17 @@ export type BookingInput = z.infer<typeof bookingSchema>
 export type MembershipPlanInput = z.infer<typeof membershipPlanCreateSchema>
 export type MonthlyRatePlanInput = z.infer<typeof monthlyRatePlanSchema>
 export type LegacyPackagePlanInput = z.infer<typeof legacyPackagePlanSchema>
+
+// FIX 5: Login account type (UI-friendly names mapped to server roles)
+export type LoginAccountType = 'STUDENT' | 'OWNER' | 'ADMIN'
+
+/**
+ * FIX 2: Normalize email for consistent storage
+ */
+export function normalizeEmail(email: string | null | undefined): string | null {
+  if (!email) return null
+  return email.trim().toLowerCase()
+}
 
 /**
  * Calculate the end date of a plan given a start date, durationValue and durationUnit.

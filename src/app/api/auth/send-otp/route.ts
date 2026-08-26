@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createOtpRecord, sendOtp, type OtpPurpose, type OtpUserType } from '@/lib/otp'
 import prisma from '@/lib/prisma'
 
+// FIX 8-9: Role-aware OTP send
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -22,12 +23,15 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Invalid user type' }, { status: 400 })
     }
 
-    // For FORGOT_PASSWORD — verify the account actually exists
+    const expectedRole = userType === 'STUDENT' ? 'STUDENT' : 'LIBRARY_OWNER'
+
+    // FIX 9: For FORGOT_PASSWORD — verify specific role account exists
     if (purpose === 'FORGOT_PASSWORD') {
-      const expectedRole = userType === 'STUDENT' ? 'STUDENT' : 'LIBRARY_OWNER'
-      const user = await prisma.user.findUnique({ where: { mobile } })
+      const user = await prisma.user.findFirst({ 
+        where: { mobile, role: expectedRole } 
+      })
       // Generic message to prevent account enumeration
-      if (!user || user.role !== expectedRole) {
+      if (!user) {
         return Response.json({
           success: true,
           message: 'If a matching account exists, an OTP has been sent.',
@@ -35,11 +39,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // For REGISTRATION — check mobile not already taken
+    // FIX 8: For REGISTRATION — check only for same role account
     if (purpose === 'REGISTRATION') {
-      const existing = await prisma.user.findUnique({ where: { mobile } })
+      const existing = await prisma.user.findFirst({ 
+        where: { mobile, role: expectedRole } 
+      })
       if (existing) {
-        return Response.json({ error: 'Mobile number already registered' }, { status: 409 })
+        const accountType = userType === 'STUDENT' ? 'student' : 'library owner'
+        return Response.json({ 
+          error: `A ${accountType} account already exists with this mobile number` 
+        }, { status: 409 })
       }
     }
 

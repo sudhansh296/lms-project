@@ -112,8 +112,8 @@ enum NotificationType {
 
 model User {
   id            String   @id @default(cuid())
-  mobile        String   @unique
-  email         String?  @unique
+  mobile        String   // FIX 1: Removed @unique - now role-scoped
+  email         String?  // FIX 2: Removed @unique - now role-scoped
   name          String
   passwordHash  String?
   role          Role
@@ -127,6 +127,13 @@ model User {
   notifications   Notification[]
   auditLogs       AuditLog[]
 
+  // FIX 1: Role-scoped mobile uniqueness - same mobile can have STUDENT and LIBRARY_OWNER accounts
+  @@unique([mobile, role], name: "unique_mobile_role")
+  // FIX 2: Role-scoped email uniqueness - handles nullable email safely
+  @@unique([email, role], name: "unique_email_role")
+  // Index for efficient mobile lookups
+  @@index([mobile])
+  @@index([email])
   @@map("users")
 }
 
@@ -455,7 +462,7 @@ model Booking {
   updatedAt    DateTime      @updatedAt
 
   payment      Payment?
-  attendance   Attendance?
+  attendances  Attendance[]  // P0-1 FIX: One-to-many for daily attendance records
   occurrences  BookingOccurrence[]
 
   @@map("bookings")
@@ -463,16 +470,17 @@ model Booking {
 
 // ─── Booking Occurrences ──────────────────────────────────────────────────────
 // One row per actual daily slot in a recurring plan booking.
-
+// P0-1 FIX: Add Attendance relation for daily check-in/out tracking
 model BookingOccurrence {
-  id         String   @id @default(cuid())
+  id         String      @id @default(cuid())
   bookingId  String
-  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  seatId     String   // denormalised for fast conflict queries
-  date       DateTime // the calendar date (00:00 UTC)
-  startTime  DateTime // full datetime of slot start
-  endTime    DateTime // full datetime of slot end
-  status     String   @default("HELD") // HELD | CONFIRMED | CANCELLED | EXPIRED
+  booking    Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  seatId     String      // denormalised for fast conflict queries
+  date       DateTime    // the calendar date (00:00 UTC)
+  startTime  DateTime    // full datetime of slot start
+  endTime    DateTime    // full datetime of slot end
+  status     String      @default("HELD") // HELD | CONFIRMED | CANCELLED | EXPIRED | COMPLETED
+  attendance Attendance? // One-to-one relation for daily attendance
 
   createdAt  DateTime @default(now())
 
@@ -555,16 +563,18 @@ model OwnerPayment {
 }
 
 // ─── Attendance ───────────────────────────────────────────────────────────────
-
+// P0-1 FIX: Link to BookingOccurrence for proper recurring attendance
 model Attendance {
-  id          String   @id @default(cuid())
-  bookingId   String   @unique
-  booking     Booking  @relation(fields: [bookingId], references: [id])
-  studentId   String
-  student     Student  @relation(fields: [studentId], references: [id])
-  checkInAt   DateTime?
-  checkOutAt  DateTime?
-  createdAt   DateTime @default(now())
+  id                    String              @id @default(cuid())
+  bookingId             String
+  booking               Booking             @relation(fields: [bookingId], references: [id])
+  bookingOccurrenceId   String              @unique
+  bookingOccurrence     BookingOccurrence   @relation(fields: [bookingOccurrenceId], references: [id])
+  studentId             String
+  student               Student             @relation(fields: [studentId], references: [id])
+  checkInAt             DateTime?
+  checkOutAt            DateTime?
+  createdAt             DateTime            @default(now())
 
   @@map("attendance")
 }

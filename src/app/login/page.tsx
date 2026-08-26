@@ -31,8 +31,16 @@ function LoginForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!mobile || !password) { toast.error('Please fill all fields'); return }
+    
+    // FIX 3: Map tab to loginAs parameter
+    const loginAsMap: Record<TabType, 'STUDENT' | 'OWNER' | 'ADMIN'> = {
+      student: 'STUDENT',
+      owner: 'OWNER',
+      admin: 'ADMIN',
+    }
+    
     setSubmitting(true)
-    const { error } = await login(mobile, password)
+    const { error } = await login(mobile, password, loginAsMap[tab])
     setSubmitting(false)
     if (error) toast.error(error)
   }

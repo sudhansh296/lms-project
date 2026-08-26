@@ -46,6 +46,8 @@ function OwnerRegisterPageInner() {
   const [submitting, setSubmitting] = useState(false)
   const [otp, setOtp] = useState('')
   const [otpVerified, setOtpVerified] = useState(false)
+  const [verificationToken, setVerificationToken] = useState('') // ✅ FIX: Store OTP proof token
+  const [verifiedMobile, setVerifiedMobile] = useState('') // ✅ FIX P16: Track which mobile was verified
   const [sendingOtp, setSendingOtp] = useState(false)
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [otpCooldown, setOtpCooldown] = useState(0)
@@ -83,10 +85,86 @@ function OwnerRegisterPageInner() {
   const set = (field: string, value: unknown) =>
     setForm((p) => ({ ...p, [field]: value }))
 
+  // ✅ FIX P16: If mobile changes after verification, invalidate it
+  useEffect(() => {
+    if (otpVerified && verifiedMobile && form.mobile !== verifiedMobile) {
+      setOtpVerified(false)
+      setVerificationToken('')
+      toast.error('Mobile number changed. Please verify again.')
+    }
+  }, [form.mobile, otpVerified, verifiedMobile])
+
   // Helper to safely read string fields from the form
   const str = (field: string): string => {
     const v = (form as unknown as Record<string, unknown>)[field]
     return typeof v === 'string' ? v : ''
+  }
+
+  // ✅ FIX: Validate each step before allowing Continue
+  const validateCurrentStep = (): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    
+    switch (step) {
+      case 0: // Owner Details
+        if (!form.name.trim()) { toast.error('Name is required'); return false }
+        if (form.name.trim().length < 2) { toast.error('Name must be at least 2 characters'); return false }
+        if (form.mobile.length !== 10) { toast.error('Enter valid 10-digit mobile number'); return false }
+        if (!form.email.trim()) { toast.error('Email is required'); return false }
+        if (!emailRegex.test(form.email)) { toast.error('Enter valid email'); return false }
+        if (form.password.length < 8) { toast.error('Password must be at least 8 characters'); return false }
+        if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return false }
+        return true
+
+      case 1: // Library Info
+        if (!form.libraryName.trim()) { toast.error('Library name is required'); return false }
+        if (form.libraryName.trim().length < 2) { toast.error('Library name must be at least 2 characters'); return false }
+        if (!form.description.trim()) { toast.error('Description is required'); return false }
+        if (form.description.trim().length < 10) { toast.error('Description must be at least 10 characters'); return false }
+        if (!form.libraryPhone.trim()) { toast.error('Library phone is required'); return false }
+        if (form.libraryPhone.replace(/\D/g, '').length !== 10) { toast.error('Enter valid 10-digit library phone'); return false }
+        if (!form.libraryEmail.trim()) { toast.error('Library email is required'); return false }
+        if (!emailRegex.test(form.libraryEmail)) { toast.error('Enter valid library email'); return false }
+        return true
+
+      case 2: // Location
+        if (!form.addressLine1.trim()) { toast.error('Address line 1 is required'); return false }
+        if (form.addressLine1.trim().length < 3) { toast.error('Address must be at least 3 characters'); return false }
+        if (!form.area.trim()) { toast.error('Area is required'); return false }
+        if (!form.city.trim()) { toast.error('City is required'); return false }
+        if (!form.state.trim()) { toast.error('State is required'); return false }
+        if (!form.pincode.trim()) { toast.error('Pincode is required'); return false }
+        if (!/^\d{6}$/.test(form.pincode)) { toast.error('Pincode must be 6 digits'); return false }
+        return true
+
+      case 3: // Facilities
+        if (form.facilities.length === 0) { toast.error('Select at least one facility'); return false }
+        return true
+
+      case 4: // Hours
+        const anyOpen = form.hours.some(h => h.isOpen)
+        if (!anyOpen) { toast.error('Library must be open at least one day'); return false }
+        for (const h of form.hours) {
+          if (h.isOpen) {
+            if (!h.openTime || !h.closeTime) { toast.error(`Set timings for ${DAYS[h.dayOfWeek]}`); return false }
+            if (h.openTime >= h.closeTime) { toast.error(`${DAYS[h.dayOfWeek]}: Close time must be after open time`); return false }
+          }
+        }
+        return true
+
+      case 5: // Rules
+        if (form.rules.length === 0) { toast.error('Add at least one rule'); return false }
+        return true
+
+      case 6: // Verify Mobile
+        if (!otpVerified) { toast.error('Please verify your mobile number first'); return false }
+        return true
+
+      case 7: // Review & Submit
+        return true
+
+      default:
+        return true
+    }
   }
 
   const toggleFacility = (id: string) => {
@@ -109,27 +187,42 @@ function OwnerRegisterPageInner() {
     if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return }
     setSubmitting(true)
     try {
+      // ✅ FIX: Include facilities, hours, and rules in payload
       const payload = {
-        name: form.name,
+        name: form.name.trim(),
         mobile: form.mobile,
-        email: form.email || undefined,
+        email: form.email.trim().toLowerCase(),
         password: form.password,
-        libraryName: form.libraryName,
-        description: form.description,
+        confirmPassword: form.confirmPassword,
+        libraryName: form.libraryName.trim(),
+        description: form.description.trim(),
         libraryPhone: form.libraryPhone,
-        libraryEmail: form.libraryEmail || undefined,
-        addressLine1: form.addressLine1,
-        addressLine2: form.addressLine2 || undefined,
-        area: form.area || undefined,
-        landmark: form.landmark || undefined,
-        city: form.city,
-        state: form.state,
+        libraryEmail: form.libraryEmail.trim().toLowerCase(),
+        addressLine1: form.addressLine1.trim(),
+        addressLine2: form.addressLine2?.trim() || undefined,
+        area: form.area.trim(),
+        landmark: form.landmark?.trim() || undefined,
+        city: form.city.trim(),
+        state: form.state.trim(),
         pincode: form.pincode,
         country: form.country,
         latitude: form.latitude ? parseFloat(form.latitude) : undefined,
         longitude: form.longitude ? parseFloat(form.longitude) : undefined,
+        // ✅ FIX P12: Send facilities array
+        facilities: form.facilities.map(f => f.trim()).filter(f => f.length > 0),
+        // ✅ FIX P13: Send hours array (all 7 days)
+        hours: form.hours.map(h => ({
+          dayOfWeek: h.dayOfWeek,
+          isOpen: h.isOpen,
+          openTime: h.isOpen ? h.openTime : null,
+          closeTime: h.isOpen ? h.closeTime : null,
+        })),
+        // ✅ FIX P14: Send rules array
+        rules: form.rules.map(r => r.trim()).filter(r => r.length > 0),
         // Pass along the referral code captured from the URL
         referralCode: referralCodeFromUrl || undefined,
+        // ✅ FIX P15: Must include verificationToken from OTP
+        verificationToken: verificationToken,
       }
 
       const res = await fetch('/api/auth/register/owner', {
@@ -181,7 +274,7 @@ function OwnerRegisterPageInner() {
           {/* Step 0: Owner */}
           {step === 0 && (
             <div className="space-y-4">
-              {[['name','Full Name','text'],['mobile','Mobile Number','tel'],['email','Email (optional)','email']].map(([n,l,t]) => (
+              {[['name','Full Name','text'],['mobile','Mobile Number','tel'],['email','Email','email']].map(([n,l,t]) => (
                 <div key={n}>
                   <label className="block text-sm font-medium text-slate-300 mb-1.5">{l}</label>
                   <input name={n} type={t} value={str(n!)} onChange={e => set(n!, n==='mobile'?e.target.value.replace(/\D/g,'').slice(0,10):e.target.value)} className={inputCls} placeholder={l} />
@@ -199,7 +292,7 @@ function OwnerRegisterPageInner() {
           {/* Step 1: Library */}
           {step === 1 && (
             <div className="space-y-4">
-              {[['libraryName','Library Name'],['description','Description (optional)'],['libraryPhone','Library Phone'],['libraryEmail','Library Email (optional)']].map(([n,l]) => (
+              {[['libraryName','Library Name'],['description','Description'],['libraryPhone','Library Phone'],['libraryEmail','Library Email']].map(([n,l]) => (
                 <div key={n}>
                   <label className="block text-sm font-medium text-slate-300 mb-1.5">{l}</label>
                   <input name={n} type="text" value={str(n!)} onChange={e => set(n!,e.target.value)} className={inputCls} placeholder={l} />
@@ -374,6 +467,9 @@ function OwnerRegisterPageInner() {
                         })
                         const data = await res.json()
                         if (!res.ok) { toast.error(data.error ?? 'Invalid OTP'); return }
+                        // ✅ FIX P15: Store verification token for registration
+                        setVerificationToken(data.verificationToken)
+                        setVerifiedMobile(form.mobile) // ✅ FIX P16: Remember which mobile was verified
                         toast.success('Mobile verified!')
                         setOtpVerified(true)
                       } finally {
@@ -430,7 +526,8 @@ function OwnerRegisterPageInner() {
             {step < STEPS.length - 1 ? (
               <Button
                 onClick={() => {
-                  if (step === 6 && !otpVerified) { toast.error('Please verify your mobile number first'); return }
+                  // ✅ FIX: Validate before allowing Continue
+                  if (!validateCurrentStep()) return
                   setStep(s => s + 1)
                 }}>
                 Continue <ChevronRight className="h-4 w-4" />

@@ -2,10 +2,11 @@ import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
 import { hashPassword, createToken, createAuditLog } from '@/lib/auth'
-import { ownerRegisterSchema } from '@/lib/validations'
+import { ownerRegisterSchema, normalizeEmail } from '@/lib/validations'
 import { generateUniqueReferralCode } from '@/lib/referral'
-import { checkBranchLimit } from '@/lib/level-limits'
+import { verifyVerificationToken } from '@/lib/otp'
 
+// FIX 7, 13-19: Role-aware owner registration with full data persistence
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -22,12 +23,59 @@ export async function POST(request: NextRequest) {
       libraryName, description, libraryPhone, libraryEmail,
       addressLine1, addressLine2, area, landmark, city, state, pincode, country,
       latitude, longitude,
+      facilities, hours, rules,
       referralCode: usedReferralCode,
+      verificationToken,
     } = parsed.data
 
-    const existing = await prisma.user.findUnique({ where: { mobile } })
-    if (existing) {
-      return Response.json({ error: 'Mobile number already registered' }, { status: 409 })
+    // FIX 10: Verify OTP registration proof
+    const tokenResult = verifyVerificationToken(verificationToken)
+    if (!tokenResult.valid) {
+      return Response.json({ error: tokenResult.error }, { status: 401 })
+    }
+
+    // Verify token matches request data
+    if (tokenResult.mobile !== mobile) {
+      return Response.json({ 
+        error: 'Mobile number mismatch. Please verify OTP again.' 
+      }, { status: 401 })
+    }
+
+    if (tokenResult.purpose !== 'REGISTRATION') {
+      return Response.json({ 
+        error: 'Invalid verification token purpose' 
+      }, { status: 401 })
+    }
+
+    if (tokenResult.userType !== 'LIBRARY_OWNER') {
+      return Response.json({ 
+        error: 'Invalid verification token user type' 
+      }, { status: 401 })
+    }
+
+    // FIX 7: Check only for existing LIBRARY_OWNER account with this mobile
+    const existingOwner = await prisma.user.findFirst({ 
+      where: { mobile, role: 'LIBRARY_OWNER' } 
+    })
+    if (existingOwner) {
+      return Response.json({ 
+        error: 'Library owner account already exists with this mobile number' 
+      }, { status: 409 })
+    }
+
+    // FIX 2: Normalize email and check role-scoped uniqueness
+    const normalizedEmailValue = normalizeEmail(email)
+    const normalizedLibraryEmail = normalizeEmail(libraryEmail)
+    
+    if (normalizedEmailValue) {
+      const emailExists = await prisma.user.findFirst({ 
+        where: { email: normalizedEmailValue, role: 'LIBRARY_OWNER' } 
+      })
+      if (emailExists) {
+        return Response.json({ 
+          error: 'Library owner account already exists with this email' 
+        }, { status: 409 })
+      }
     }
 
     // Get free plan
@@ -64,11 +112,12 @@ export async function POST(request: NextRequest) {
     const passwordHash = await hashPassword(password)
     const trialEnd = new Date(Date.now() + freePlan.trialDays * 24 * 60 * 60 * 1000)
 
+    // FIX 18: Create everything atomically in one transaction
     const user = await prisma.user.create({
       data: {
         mobile,
         name,
-        email: email || null,
+        email: normalizedEmailValue,
         passwordHash,
         role: 'LIBRARY_OWNER',
         libraryOwner: {
@@ -81,7 +130,7 @@ export async function POST(request: NextRequest) {
                 name: libraryName,
                 description,
                 phone: libraryPhone,
-                emailContact: libraryEmail || null,
+                emailContact: normalizedLibraryEmail,
                 addressLine1,
                 addressLine2,
                 area,
@@ -93,6 +142,26 @@ export async function POST(request: NextRequest) {
                 latitude,
                 longitude,
                 status: 'PENDING_VERIFICATION',
+                // FIX 13: Create facilities
+                facilities: {
+                  create: facilities.map(name => ({ name })),
+                },
+                // FIX 14: Create library hours
+                hours: {
+                  create: hours.map(h => ({
+                    dayOfWeek: h.dayOfWeek,
+                    isOpen: h.isOpen,
+                    openTime: h.openTime || null,
+                    closeTime: h.closeTime || null,
+                  })),
+                },
+                // FIX 15: Create library rules
+                rules: {
+                  create: rules.map((rule, index) => ({
+                    rule,
+                    order: index,
+                  })),
+                },
               },
             },
             subscription: {
@@ -109,41 +178,50 @@ export async function POST(request: NextRequest) {
       },
       include: {
         libraryOwner: {
-          include: { libraries: true },
+          include: { 
+            libraries: {
+              include: {
+                facilities: true,
+                hours: true,
+                rules: true,
+              },
+            },
+          },
         },
       },
     })
 
-    // Create referral record if this owner was referred
+    // If a valid referrer exists, create referral record
     if (referrerOwner && usedReferralCode) {
-      const newOwnerId = user.libraryOwner!.id
-      // Prevent self-referral (shouldn't happen but guard anyway)
-      if (referrerOwner.id !== newOwnerId) {
-        await prisma.ownerReferral.create({
-          data: {
-            referrerOwnerId: referrerOwner.id,
-            referredOwnerId: newOwnerId,
-            referralCode: usedReferralCode,
-            status: 'PENDING',
-          },
-        })
-      }
+      await prisma.ownerReferral.create({
+        data: {
+          referrerOwnerId: referrerOwner.id,
+          referredOwnerId: user.libraryOwner!.id,
+          referralCode: usedReferralCode,
+          status: 'PENDING', // Will be QUALIFIED when library is approved
+        },
+      })
     }
 
-    // Notify super admins about new library registration
-    const superAdmins = await prisma.user.findMany({ where: { role: 'SUPER_ADMIN' } })
-    if (superAdmins.length > 0) {
-      await prisma.notification.createMany({
-        data: superAdmins.map((admin: { id: string }) => ({
+    // Send notification to admins
+    const adminUsers = await prisma.user.findMany({
+      where: { role: 'SUPER_ADMIN' },
+      select: { id: true },
+    })
+
+    await Promise.all(adminUsers.map(admin =>
+      prisma.notification.create({
+        data: {
           userId: admin.id,
           type: 'NEW_STUDENT' as const, // reusing, will use PLATFORM_ALERT
           title: 'New Library Registration',
           message: `${libraryName} has been registered and is pending verification.`,
           data: { libraryId: user.libraryOwner!.libraries[0].id },
-        })),
+        },
       })
-    }
+    ))
 
+    // FIX 20-21: Create session for new LIBRARY_OWNER account
     const sessionUser = {
       id: user.libraryOwner!.id,
       userId: user.id,
@@ -167,15 +245,25 @@ export async function POST(request: NextRequest) {
     await createAuditLog({
       userId: user.id,
       role: 'LIBRARY_OWNER',
-      libraryId: user.libraryOwner!.libraries[0].id,
-      action: 'LIBRARY_CREATED',
-      entityType: 'Library',
-      entityId: user.libraryOwner!.libraries[0].id,
+      action: 'OWNER_REGISTERED',
+      entityType: 'LibraryOwner',
+      entityId: user.libraryOwner!.id,
+      metadata: { 
+        libraryName,
+        facilities: facilities.length,
+        rules: rules.length,
+      },
     })
 
     return Response.json({ user: sessionUser }, { status: 201 })
   } catch (error) {
     console.error('Owner register error:', error)
+    // FIX 19: Handle Prisma unique constraint errors
+    if (error instanceof Error && error.message.includes('Unique constraint')) {
+      return Response.json({ 
+        error: 'Account with this mobile or email already exists' 
+      }, { status: 409 })
+    }
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

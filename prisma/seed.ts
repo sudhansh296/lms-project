@@ -46,7 +46,12 @@ async function main() {
   const passwordHash = await bcrypt.hash(adminPassword, 12)
 
   const admin = await prisma.user.upsert({
-    where: { mobile: adminMobile },
+    where: { 
+      unique_mobile_role: { 
+        mobile: adminMobile, 
+        role: 'SUPER_ADMIN' 
+      } 
+    },
     update: {},
     create: {
       mobile: adminMobile,
@@ -62,7 +67,12 @@ async function main() {
   // Create a demo library owner
   const ownerHash = await bcrypt.hash('Owner@1234', 12)
   const ownerUser = await prisma.user.upsert({
-    where: { mobile: '9876543210' },
+    where: { 
+      unique_mobile_role: { 
+        mobile: '9876543210', 
+        role: 'LIBRARY_OWNER' 
+      } 
+    },
     update: {},
     create: {
       mobile: '9876543210',
@@ -185,7 +195,11 @@ async function main() {
     include: { libraryOwner: { include: { libraries: true } } },
   })
 
-  const library = ownerUser.libraryOwner!.libraries[0]
+  if (!ownerUser.libraryOwner) {
+    throw new Error('Failed to create library owner')
+  }
+
+  const library = ownerUser.libraryOwner.libraries[0]
   console.log(`✅ Demo library owner created: 9876543210 / Owner@1234`)
   console.log(`✅ Demo library created: ${library.name}`)
 
@@ -244,7 +258,12 @@ async function main() {
   // Create a demo student
   const studentHash = await bcrypt.hash('Student@1234', 12)
   const studentUser = await prisma.user.upsert({
-    where: { mobile: '9123456789' },
+    where: { 
+      unique_mobile_role: { 
+        mobile: '9123456789', 
+        role: 'STUDENT' 
+      } 
+    },
     update: {},
     create: {
       mobile: '9123456789',

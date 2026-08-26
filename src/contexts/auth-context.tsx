@@ -16,7 +16,7 @@ interface SessionUser {
 interface AuthContextValue {
   user: SessionUser | null
   loading: boolean
-  login: (mobile: string, password: string) => Promise<{ error?: string }>
+  login: (mobile: string, password: string, loginAs: 'STUDENT' | 'OWNER' | 'ADMIN') => Promise<{ error?: string }>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -46,11 +46,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setLoading(false))
   }, [refresh])
 
-  const login = useCallback(async (mobile: string, password: string) => {
+  const login = useCallback(async (mobile: string, password: string, loginAs: 'STUDENT' | 'OWNER' | 'ADMIN') => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mobile, password }),
+      body: JSON.stringify({ mobile, password, loginAs }),
     })
     const data = await res.json()
     if (!res.ok) return { error: data.error ?? 'Login failed' }
