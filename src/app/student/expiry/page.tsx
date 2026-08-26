@@ -25,6 +25,7 @@ interface ActiveBooking {
   monthlyPriceSnapshot?: number | null
   selectedMonths?: number | null
   dailyMinutesSnapshot?: number | null
+  payment?: { amount: number; status: string } | null // P1-4: Include actual payment amount
 }
 
 export default function StudentExpiryPage() {
@@ -237,7 +238,9 @@ export default function StudentExpiryPage() {
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <span className="text-sm text-slate-500">Total Paid</span>
                 <div className="text-right">
-                  <p className="font-bold text-indigo-600 text-base">₹{activeBooking.totalAmount.toFixed(0)}</p>
+                  <p className="font-bold text-indigo-600 text-base">
+                    ₹{(activeBooking.payment?.amount ?? activeBooking.totalAmount).toFixed(0)}
+                  </p>
                   <p className="text-xs text-slate-500">incl. gateway fees</p>
                 </div>
               </div>
@@ -246,8 +249,10 @@ export default function StudentExpiryPage() {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <span className="text-sm text-slate-500">Plan Cost</span>
               <div className="text-right">
-                <p className="font-bold text-slate-900 text-sm">₹{activeBooking.totalAmount.toFixed(0)}</p>
-                {planPrice > 0 && planPrice !== activeBooking.totalAmount && (
+                <p className="font-bold text-slate-900 text-sm">
+                  ₹{(activeBooking.payment?.amount ?? activeBooking.totalAmount).toFixed(0)}
+                </p>
+                {planPrice > 0 && planPrice !== (activeBooking.payment?.amount ?? activeBooking.totalAmount) && (
                   <p className="text-xs text-slate-500">base: ₹{planPrice.toFixed(0)}</p>
                 )}
               </div>

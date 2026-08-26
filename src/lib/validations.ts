@@ -343,7 +343,19 @@ export function calcPlanEndDate(
   switch (durationUnit) {
     case 'DAY':   d.setDate(d.getDate() + durationValue);           break
     case 'WEEK':  d.setDate(d.getDate() + durationValue * 7);       break
-    case 'MONTH': d.setMonth(d.getMonth() + durationValue);         break
+    case 'MONTH': {
+      // P1-3 FIX: Proper month arithmetic with day clamping
+      // Jan 31 + 1 month should be Feb 28/29, not March 2/3
+      const originalDay = d.getDate()
+      d.setMonth(d.getMonth() + durationValue)
+      
+      // If day overflowed (e.g., Jan 31 → March 3), clamp to last day of target month
+      if (d.getDate() !== originalDay) {
+        // Set to day 0 of next month = last day of current month
+        d.setDate(0)
+      }
+      break
+    }
     case 'YEAR':  d.setFullYear(d.getFullYear() + durationValue);   break
   }
   return d
