@@ -15,7 +15,9 @@ interface Plan {
   id: string
   name: string
   description?: string
+  pricingModel?: string
   dailyMinutes: number
+  monthlyPrice?: number
   durationValue: number
   durationUnit: string
   price: number
@@ -24,6 +26,7 @@ interface Plan {
   fixedEndTime?: string | null
   allowedDays: number[]
   benefits: string[]
+  isActive?: boolean
 }
 
 interface Seat {
@@ -45,9 +48,41 @@ interface Library {
 }
 
 interface PaymentBreakdown {
-  planPrice: number; seatExtraAmount: number; baseAmount: number
-  platformFee: number; processingFee: number; gstAmount: number
-  totalAmount: number; ownerAmount: number
+  planPrice: number
+  months?: number
+  monthlyPrice?: number
+  seatExtraAmount: number
+  baseAmount: number
+  platformFee: number
+  processingFee: number
+  gstAmount: number
+  totalAmount: number
+  ownerAmount: number
+  libraryBaseAmount?: number
+  platformCommission?: number
+  gatewayFee?: number
+  gatewayFeeGst?: number
+  studentTotal?: number
+}
+
+interface OrderData {
+  orderId: string
+  amount: number
+  currency: string
+  key: string
+  bookingId: string
+  bookingRef: string
+  breakdown: PaymentBreakdown
+  plan: {
+    name: string
+    dailyMinutes: number
+    startDate: string
+    endDate: string
+    dailyStartTime: string
+    dailyEndTime: string
+    durationValue: number
+    durationUnit: string
+  }
 }
 
 const COLORS = { available: '#22c55e', booked: '#f59e0b', maintenance: '#94a3b8', selected: '#6366f1' }
@@ -91,11 +126,12 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
   const searchParams = useSearchParams()
   const preselectedPlanId = searchParams.get('plan') ?? ''
 
-  const [step, setStep] = useState<'plan'|'datetime'|'seat'|'summary'|'done'>('plan')
+  const [step, setStep] = useState<'plan'|'months'|'datetime'|'seat'|'summary'|'done'>('plan')
   const [library, setLibrary] = useState<Library | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
+  const [selectedMonths, setSelectedMonths] = useState(1)
 
-  // Step 2
+  // Step 2/3
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [dailyStartTime, setDailyStartTime] = useState('09:00')
 
@@ -107,19 +143,14 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
   const [loadingSeats, setLoadingSeats] = useState(false)
 
   // Order / payment
-  const [orderData, setOrderData] = useState<{
-    orderId: string; amount: number; currency: string; key: string
-    bookingId: string; bookingRef: string; breakdown: PaymentBreakdown
-    plan: { name: string; dailyMinutes: number; startDate: string; endDate: string
-            dailyStartTime: string; dailyEndTime: string; durationValue: number; durationUnit: string }
-  } | null>(null)
+  const [orderData, setOrderData] = useState<OrderData | null>(null)
   const [creatingOrder, setCreatingOrder] = useState(false)
   const [paying, setPaying] = useState(false)
 
   // Done
   const [confirmedRef, setConfirmedRef] = useState('')
   const [confirmedBreakdown, setConfirmedBreakdown] = useState<PaymentBreakdown | null>(null)
-  const [confirmedPlan, setConfirmedPlan] = useState<typeof orderData['plan'] | null>(null)
+  const [confirmedPlan, setConfirmedPlan] = useState<OrderData['plan'] | null>(null)
 
   useEffect(() => {
     fetch(`/api/libraries/${libraryId}`)
@@ -129,12 +160,20 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
         // Auto-select if plan passed via URL
         if (preselectedPlanId && d.library?.membershipPlans) {
           const p = d.library.membershipPlans.find((x: Plan) => x.id === preselectedPlanId)
-          if (p) { setSelectedPlan(p); setStep('datetime') }
+          if (p) { 
+            setSelectedPlan(p)
+            // Go to months step if MONTHLY_RATE, otherwise datetime
+            setStep(p.pricingModel === 'MONTHLY_RATE' ? 'months' : 'datetime')
+          }
         }
       })
   }, [libraryId, preselectedPlanId])
 
   // Derived values for selected plan
+  const isMonthlyRate = selectedPlan?.pricingModel === 'MONTHLY_RATE'
+  const effectiveDurationValue = isMonthlyRate ? selectedMonths : (selectedPlan?.durationValue ?? 1)
+  const effectiveDurationUnit = isMonthlyRate ? 'MONTH' : (selectedPlan?.durationUnit ?? 'MONTH')
+  
   const resolvedDailyStart = selectedPlan?.timeSelectionMode === 'FIXED' && selectedPlan.fixedStartTime
     ? selectedPlan.fixedStartTime
     : dailyStartTime
@@ -143,8 +182,16 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
     : ''
 
   const endDate = selectedPlan
-    ? calcEndDate(new Date(startDate), selectedPlan.durationValue, selectedPlan.durationUnit)
+    ? calcEndDate(new Date(startDate), effectiveDurationValue, effectiveDurationUnit)
     : null
+    
+  // Calculate display price for monthly rate plans
+  const displayMonthlyPrice = isMonthlyRate 
+    ? (selectedPlan?.monthlyPrice ?? selectedPlan?.price ?? 0)
+    : 0
+  const displayTotalPrice = isMonthlyRate
+    ? displayMonthlyPrice * selectedMonths
+    : (selectedPlan?.price ?? 0)
 
   // ── Fetch available seats for the plan's daily slot ─────────────────────────
   const fetchSeats = async () => {
@@ -171,10 +218,18 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
     if (!selectedSeat || !selectedPlan) return
     setCreatingOrder(true)
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, unknown> = {
         libraryId, planId: selectedPlan.id, seatId: selectedSeat.id, startDate,
       }
-      if (selectedPlan.timeSelectionMode === 'FLEXIBLE') body.dailyStartTime = dailyStartTime
+      
+      // For MONTHLY_RATE plans, send months parameter
+      if (isMonthlyRate) {
+        body.months = selectedMonths
+      }
+      
+      if (selectedPlan.timeSelectionMode === 'FLEXIBLE') {
+        body.dailyStartTime = dailyStartTime
+      }
 
       const res = await fetch('/api/payments/seat-order', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -263,10 +318,21 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
           ))}
           {bd && (
             <div className="border-t border-white/20 pt-3 space-y-1.5">
-              {[
-                ['Plan Price', fmt(bd.planPrice)],
+              {bd.monthlyPrice && bd.months ? [
+                ['Monthly Rate', fmt(bd.monthlyPrice)],
+                ['Duration', `${bd.months} month${bd.months > 1 ? 's' : ''}`],
+                ['Plan Amount', fmt(bd.monthlyPrice * bd.months)],
                 ...(bd.seatExtraAmount > 0 ? [['Seat Extra', fmt(bd.seatExtraAmount)]] : []),
-                ['Platform Fee (5%)', fmt(bd.platformFee)],
+                ...(bd.gatewayFee && bd.gatewayFee > 0 ? [['Gateway Fee', fmt((bd.gatewayFee ?? 0) + (bd.gatewayFeeGst ?? 0))]] : []),
+                ['Total Paid', fmt(bd.studentTotal ?? bd.totalAmount)],
+              ].map(([l,v]) => (
+                <div key={l} className={`flex justify-between text-sm ${l==='Total Paid'?'font-bold border-t border-white/20 pt-2':''}`}>
+                  <span className="text-indigo-300">{l}</span><span>{v}</span>
+                </div>
+              )) : [
+                ['Plan Price', fmt(bd.planPrice ?? bd.baseAmount)],
+                ...(bd.seatExtraAmount > 0 ? [['Seat Extra', fmt(bd.seatExtraAmount)]] : []),
+                ['Platform Fee (5%)', fmt(bd.platformFee ?? 0)],
                 ['Total Paid', fmt(bd.totalAmount)],
               ].map(([l,v]) => (
                 <div key={l} className={`flex justify-between text-sm ${l==='Total Paid'?'font-bold border-t border-white/20 pt-2':''}`}>
@@ -319,14 +385,44 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
           <div className="rounded-2xl bg-white border border-slate-100 p-5">
             <div className="flex items-center gap-2 mb-4"><Receipt className="h-4 w-4 text-indigo-500" /><h2 className="font-bold text-slate-900">Payment Breakdown</h2></div>
             <div className="space-y-3 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500">Plan Price ({cp.name})</span><span className="font-medium">{fmt(bd.planPrice)}</span></div>
+              {/* Show monthly pricing details if available */}
+              {bd.monthlyPrice && bd.months ? (
+                <>
+                  <div className="flex justify-between"><span className="text-slate-500">Monthly Rate</span><span className="font-medium">{fmt(bd.monthlyPrice)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Duration</span><span className="font-medium">{bd.months} month{bd.months > 1 ? 's' : ''}</span></div>
+                  <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Plan Amount ({cp.name})</span><span className="font-medium">{fmt(bd.monthlyPrice * bd.months)}</span></div>
+                </>
+              ) : (
+                <div className="flex justify-between"><span className="text-slate-500">Plan Price ({cp.name})</span><span className="font-medium">{fmt(bd.planPrice ?? bd.baseAmount)}</span></div>
+              )}
+              
               {bd.seatExtraAmount > 0 && <div className="flex justify-between"><span className="text-slate-500">Seat Extra</span><span className="font-medium">{fmt(bd.seatExtraAmount)}</span></div>}
-              <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Library Amount</span><span className="font-medium">{fmt(bd.baseAmount)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Platform / Service Fee (5%)</span><span className="font-medium">{fmt(bd.platformFee)}</span></div>
-              {bd.processingFee > 0 && <div className="flex justify-between"><span className="text-slate-500">Processing Fee</span><span className="font-medium">{fmt(bd.processingFee)}</span></div>}
+              
+              {/* Show new breakdown format if available */}
+              {bd.libraryBaseAmount !== undefined ? (
+                <>
+                  <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Library Base Amount</span><span className="font-medium">{fmt(bd.libraryBaseAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Platform Commission (5%)</span><span className="font-medium text-slate-400">-{fmt(bd.platformCommission ?? 0)} (from owner)</span></div>
+                  {bd.gatewayFee && bd.gatewayFee > 0 && (
+                    <>
+                      <div className="flex justify-between"><span className="text-slate-500">Gateway Fee</span><span className="font-medium">{fmt(bd.gatewayFee)}</span></div>
+                      {bd.gatewayFeeGst && bd.gatewayFeeGst > 0 && (
+                        <div className="flex justify-between"><span className="text-slate-500">Gateway GST</span><span className="font-medium">{fmt(bd.gatewayFeeGst)}</span></div>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Library Amount</span><span className="font-medium">{fmt(bd.baseAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Platform / Service Fee (5%)</span><span className="font-medium">{fmt(bd.platformFee ?? 0)}</span></div>
+                  {bd.processingFee && bd.processingFee > 0 && <div className="flex justify-between"><span className="text-slate-500">Processing Fee</span><span className="font-medium">{fmt(bd.processingFee)}</span></div>}
+                </>
+              )}
+              
               <div className="flex justify-between pt-3 border-t border-slate-100 font-bold text-base">
                 <span className="text-slate-900">Total Payable</span>
-                <span className="text-indigo-600">{fmt(bd.totalAmount)}</span>
+                <span className="text-indigo-600">{fmt(bd.studentTotal ?? bd.totalAmount)}</span>
               </div>
             </div>
           </div>
@@ -336,7 +432,7 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
             Payment processed securely via Razorpay. UPI, cards, netbanking accepted.
           </div>
           <Button className="w-full" size="lg" loading={paying} onClick={handlePayNow}>
-            <CreditCard className="h-4 w-4" /> Pay {fmt(bd.totalAmount)}
+            <CreditCard className="h-4 w-4" /> Pay {fmt(bd.studentTotal ?? bd.totalAmount)}
           </Button>
           <Button variant="outline" className="w-full" size="lg" onClick={() => { setOrderData(null); setStep('seat') }}>← Change Seat</Button>
         </div>
@@ -345,21 +441,27 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
   }
 
   // ── Steps header ──────────────────────────────────────────────────────────────
-  const steps = ['plan','datetime','seat'] as const
-  const stepIdx = steps.indexOf(step as typeof steps[number])
+  const steps = ['plan','months','datetime','seat','summary','done'] as const
+  const stepIdx = steps.indexOf(step)
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-white border-b border-slate-100 px-4 py-3 sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <button onClick={() => {
-            if (step === 'datetime') setStep('plan')
-            else if (step === 'seat') setStep('datetime')
-            else router.back()
+            if (step === 'datetime') {
+              setStep(isMonthlyRate ? 'months' : 'plan')
+            } else if (step === 'months') {
+              setStep('plan')
+            } else if (step === 'seat') {
+              setStep('datetime')
+            } else {
+              router.back()
+            }
           }} className="p-1.5 rounded-lg hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <h1 className="font-bold text-slate-900 text-sm">
-              {step==='plan'?'Choose Study Plan':step==='datetime'?'Set Start Date & Time':'Choose a Seat'}
+              {step==='plan'?'Choose Study Plan':step==='months'?'Choose Duration':step==='datetime'?'Set Start Date & Time':'Choose a Seat'}
             </h1>
             <p className="text-xs text-slate-500">{library?.name}</p>
           </div>
@@ -382,9 +484,16 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
             </div>
           )}
           
-          {library?.membershipPlans.map(plan => (
+          {library?.membershipPlans.filter(p => p.isActive !== false).map(plan => {
+            const isPlanMonthlyRate = plan.pricingModel === 'MONTHLY_RATE'
+            const planDisplayPrice = isPlanMonthlyRate ? (plan.monthlyPrice ?? plan.price) : plan.price
+            
+            return (
             <div key={plan.id}
-              onClick={() => { setSelectedPlan(plan); setStep('datetime') }}
+              onClick={() => { 
+                setSelectedPlan(plan)
+                setStep(isPlanMonthlyRate ? 'months' : 'datetime')
+              }}
               className="rounded-2xl bg-white border-2 border-slate-100 hover:border-indigo-400 p-5 cursor-pointer transition-all hover:shadow-md active:scale-[0.99]">
               
               <div className="flex items-start justify-between gap-3 mb-3">
@@ -393,9 +502,8 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
                   {plan.description && <p className="text-xs text-slate-500 mt-0.5">{plan.description}</p>}
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-2xl font-bold text-indigo-600">₹{plan.price.toFixed(0)}</p>
-                  <p className="text-[10px] text-slate-400">you pay ₹{(plan.price*1.05).toFixed(0)}</p>
-                  <p className="text-[9px] text-slate-300">incl. 5% platform fee</p>
+                  <p className="text-2xl font-bold text-indigo-600">₹{planDisplayPrice.toFixed(0)}</p>
+                  <p className="text-xs text-slate-500">{isPlanMonthlyRate ? '/ month' : `for ${plan.durationValue} ${plan.durationUnit.toLowerCase()}(s)`}</p>
                 </div>
               </div>
 
@@ -403,9 +511,15 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
                 <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full flex items-center gap-1 font-medium">
                   <Clock className="h-3 w-3" /> {formatDailyMins(plan.dailyMinutes)}
                 </span>
-                <span className="bg-violet-50 text-violet-700 px-2 py-1 rounded-full flex items-center gap-1 font-medium">
-                  <Calendar className="h-3 w-3" /> {formatDuration(plan.durationValue, plan.durationUnit)}
-                </span>
+                {isPlanMonthlyRate ? (
+                  <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full flex items-center gap-1 font-medium">
+                    <Calendar className="h-3 w-3" /> You choose duration
+                  </span>
+                ) : (
+                  <span className="bg-violet-50 text-violet-700 px-2 py-1 rounded-full flex items-center gap-1 font-medium">
+                    <Calendar className="h-3 w-3" /> {formatDuration(plan.durationValue, plan.durationUnit)}
+                  </span>
+                )}
                 <span className={`px-2 py-1 rounded-full font-medium ${
                   plan.timeSelectionMode==='FIXED'
                     ?'bg-amber-50 text-amber-700'
@@ -444,22 +558,24 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
               )}
 
               <div className="mt-3 text-right">
-                <span className="text-sm text-indigo-600 font-semibold">Select Plan →</span>
+                <span className="text-sm text-indigo-600 font-semibold">
+                  {isPlanMonthlyRate ? 'Choose This Rate →' : 'Select Plan →'}
+                </span>
               </div>
             </div>
-          ))}
+          )})}
         </div>
       )}
 
-      {/* ── Step 2: Date & Time ──────────────────────────────────────────────── */}
-      {step === 'datetime' && selectedPlan && (
+      {/* ── Step 2: Months Selection (MONTHLY_RATE only) ──────────────────────── */}
+      {step === 'months' && selectedPlan && isMonthlyRate && (
         <div className="p-4 space-y-4 max-w-md mx-auto">
           {/* Selected plan summary */}
           <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-4">
             <div className="flex items-center justify-between mb-2">
               <div>
                 <p className="font-bold text-indigo-900">{selectedPlan.name}</p>
-                <p className="text-sm text-indigo-700">₹{selectedPlan.price} + ₹{(selectedPlan.price * 0.05).toFixed(0)} platform fee = ₹{(selectedPlan.price * 1.05).toFixed(0)}</p>
+                <p className="text-sm text-indigo-700">₹{displayMonthlyPrice.toFixed(0)} per month</p>
               </div>
               <button onClick={() => setStep('plan')} className="text-sm text-indigo-600 underline font-medium">Change</button>
             </div>
@@ -467,8 +583,110 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
               <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full font-medium">
                 {formatDailyMins(selectedPlan.dailyMinutes)}
               </span>
+            </div>
+          </div>
+
+          {/* Duration selector */}
+          <div className="rounded-2xl bg-white border border-slate-200 p-5 space-y-4">
+            <div>
+              <h3 className="font-bold text-slate-900 mb-1">Choose Duration</h3>
+              <p className="text-xs text-slate-500">Select how many months you want to book</p>
+            </div>
+
+            {/* Months slider */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-600">Duration:</span>
+                <span className="text-2xl font-bold text-indigo-600">{selectedMonths} month{selectedMonths > 1 ? 's' : ''}</span>
+              </div>
+              
+              <input
+                type="range"
+                min="1"
+                max="24"
+                value={selectedMonths}
+                onChange={(e) => setSelectedMonths(parseInt(e.target.value))}
+                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+              />
+              
+              <div className="flex justify-between text-xs text-slate-400">
+                <span>1 month</span>
+                <span>24 months</span>
+              </div>
+            </div>
+
+            {/* Quick select buttons */}
+            <div className="grid grid-cols-4 gap-2">
+              {[1, 3, 6, 12].map(m => (
+                <button
+                  key={m}
+                  onClick={() => setSelectedMonths(m)}
+                  className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                    selectedMonths === m
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  {m}M
+                </button>
+              ))}
+            </div>
+
+            {/* Price preview */}
+            <div className="rounded-lg bg-slate-50 border border-slate-100 p-4 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-600">Monthly rate</span>
+                <span className="font-medium">₹{displayMonthlyPrice.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-600">Duration</span>
+                <span className="font-medium">{selectedMonths} month{selectedMonths > 1 ? 's' : ''}</span>
+              </div>
+              <div className="border-t border-slate-200 pt-2 flex justify-between">
+                <span className="font-bold text-slate-900">Base amount</span>
+                <span className="font-bold text-indigo-600 text-lg">₹{displayTotalPrice.toFixed(0)}</span>
+              </div>
+              <p className="text-xs text-slate-500">+ seat extra charge (if any) + gateway fees at checkout</p>
+            </div>
+          </div>
+
+          <Button 
+            className="w-full" 
+            size="lg"
+            onClick={() => setStep('datetime')}
+          >
+            Continue to Date & Time →
+          </Button>
+        </div>
+      )}
+
+      {/* ── Step 3: Date & Time ──────────────────────────────────────────────── */}
+      {step === 'datetime' && selectedPlan && (
+        <div className="p-4 space-y-4 max-w-md mx-auto">
+          {/* Selected plan summary */}
+          <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="font-bold text-indigo-900">{selectedPlan.name}</p>
+                {isMonthlyRate ? (
+                  <p className="text-sm text-indigo-700">
+                    ₹{displayMonthlyPrice.toFixed(0)} × {selectedMonths} month{selectedMonths > 1 ? 's' : ''} = ₹{displayTotalPrice.toFixed(0)}
+                  </p>
+                ) : (
+                  <p className="text-sm text-indigo-700">₹{selectedPlan.price.toFixed(0)} for {formatDuration(selectedPlan.durationValue, selectedPlan.durationUnit)}</p>
+                )}
+              </div>
+              <button onClick={() => setStep(isMonthlyRate ? 'months' : 'plan')} className="text-sm text-indigo-600 underline font-medium">Change</button>
+            </div>
+            <div className="flex gap-2 text-xs">
               <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full font-medium">
-                {formatDuration(selectedPlan.durationValue, selectedPlan.durationUnit)}
+                {formatDailyMins(selectedPlan.dailyMinutes)}
+              </span>
+              <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full font-medium">
+                {isMonthlyRate 
+                  ? `${selectedMonths} month${selectedMonths > 1 ? 's' : ''}`
+                  : formatDuration(selectedPlan.durationValue, selectedPlan.durationUnit)
+                }
               </span>
             </div>
           </div>
@@ -490,7 +708,12 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
                   </div>
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-slate-600">Total duration:</span>
-                    <span className="font-semibold text-indigo-600">{formatDuration(selectedPlan.durationValue, selectedPlan.durationUnit)}</span>
+                    <span className="font-semibold text-indigo-600">
+                      {isMonthlyRate 
+                        ? `${selectedMonths} month${selectedMonths > 1 ? 's' : ''}`
+                        : formatDuration(selectedPlan.durationValue, selectedPlan.durationUnit)
+                      }
+                    </span>
                   </div>
                 </div>
               )}

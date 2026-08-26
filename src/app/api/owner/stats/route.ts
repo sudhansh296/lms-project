@@ -53,7 +53,7 @@ export async function GET() {
             { membership: { libraryId: libId } },
           ],
         },
-        _sum: { amount: true },
+        _sum: { ownerAmount: true },
       }),
       prisma.payment.aggregate({
         where: {
@@ -64,7 +64,7 @@ export async function GET() {
             { membership: { libraryId: libId } },
           ],
         },
-        _sum: { amount: true },
+        _sum: { ownerAmount: true },
       }),
       prisma.studentMembership.count({
         where: {
@@ -87,8 +87,8 @@ export async function GET() {
       students: { active: activeStudents },
       memberships: { active: activeMemberships, expiringSoon: expiringMemberships },
       revenue: {
-        today: todayRevenue._sum.amount ?? 0,
-        monthly: monthlyRevenue._sum.amount ?? 0,
+        today: todayRevenue._sum.ownerAmount ?? 0,
+        monthly: monthlyRevenue._sum.ownerAmount ?? 0,
       },
     })
   } catch (error: unknown) {

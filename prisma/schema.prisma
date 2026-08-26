@@ -355,13 +355,19 @@ model MembershipPlan {
   // ── Daily access duration ──────────────────────────────────────────────────
   dailyMinutes    Int    @default(60)   // minutes per day, e.g. 120 = 2 hrs/day
 
-  // ── Plan duration (owner-defined) ─────────────────────────────────────────
-  durationValue   Int    @default(1)    // e.g. 1, 3, 6, 12
-  durationUnit    String @default("MONTH") // DAY | WEEK | MONTH | YEAR
+  // ── Plan duration (LEGACY - owner-defined, deprecated for new plans) ──────
+  durationValue   Int    @default(1)    // e.g. 1, 3, 6, 12 (LEGACY_PACKAGE only)
+  durationUnit    String @default("MONTH") // DAY | WEEK | MONTH | YEAR (LEGACY_PACKAGE only)
   durationDays    Int    @default(30)   // kept for backward compat; derived on write
 
-  // ── Pricing ───────────────────────────────────────────────────────────────
-  price        Float
+  // ── Pricing Model ─────────────────────────────────────────────────────────
+  pricingModel String  @default("LEGACY_PACKAGE") // LEGACY_PACKAGE | MONTHLY_RATE
+  
+  // ── Pricing (legacy field for backward compat) ────────────────────────────
+  price        Float   // For LEGACY_PACKAGE: total package price. For MONTHLY_RATE: deprecated, use monthlyPrice
+  
+  // ── Monthly Rate Pricing (NEW - authoritative for MONTHLY_RATE plans) ────
+  monthlyPrice Float?  // Price per month for this daily duration (e.g. ₹150/month for 2hrs/day)
 
   // ── Time selection mode ───────────────────────────────────────────────────
   timeSelectionMode  String  @default("FLEXIBLE") // FLEXIBLE | FIXED
@@ -379,6 +385,8 @@ model MembershipPlan {
   studentMemberships StudentMembership[]
   bookings           Booking[]
 
+  @@index([pricingModel, isActive])
+  @@unique([libraryId, dailyMinutes, pricingModel], name: "library_daily_monthly_unique")
   @@map("membership_plans")
 }
 
@@ -428,7 +436,9 @@ model Booking {
   planPriceSnapshot     Float?
   seatExtraSnapshot     Float?
   dailyMinutesSnapshot  Int?
-  durationSnapshot      String?   // e.g. "3 MONTH"
+  durationSnapshot      String?   // e.g. "3 MONTH" (legacy)
+  monthlyPriceSnapshot  Float?    // Monthly rate at time of booking (for MONTHLY_RATE plans)
+  selectedMonths        Int?      // Number of months student purchased (for MONTHLY_RATE plans)
 
   // ── Legacy single-occurrence fields (kept for backward compat) ───────────
   bookingDate  DateTime      // date portion
@@ -488,13 +498,22 @@ model Payment {
   gatewayTransferId   String?       // Razorpay transfer ID (for route to owner)
   refundId            String?
   refundAmount        Float?
-  // Platform commission tracking
-  platformFee         Float?        // Amount kept by platform (5% of base)
-  ownerAmount         Float?        // Amount routed to library owner
-  processingFee       Float?        // Razorpay/payment processing fee charged to student
-  gstAmount           Float?        // GST on processing fee charged to student
-  baseAmount          Float?        // planPrice + seatExtraAmount
-  planPrice           Float?        // Plan package price (owner-defined)
+  
+  // Platform commission tracking (NEW MODEL: deducted FROM owner, not added to student)
+  platformFee         Float?        // Amount kept by platform (5% of baseAmount, deducted from owner)
+  ownerAmount         Float?        // Amount routed to library owner (baseAmount - platformFee)
+  
+  // Gateway fee recovery (separate from platform commission, recovered from student)
+  gatewayFee          Float?        // Razorpay payment gateway fee (charged to student)
+  gatewayFeeGst       Float?        // GST on gateway fee (charged to student)
+  processingFee       Float?        // DEPRECATED: use gatewayFee instead
+  gstAmount           Float?        // DEPRECATED: use gatewayFeeGst instead
+  
+  // Pricing breakdown
+  baseAmount          Float?        // libraryBaseAmount (planPrice/monthlyPrice × months + seatExtra)
+  planPrice           Float?        // Plan package price (legacy) or calculated amount (monthlyPrice × months)
+  monthlyPrice        Float?        // Monthly rate used (for MONTHLY_RATE plans)
+  selectedMonths      Int?          // Number of months purchased (for MONTHLY_RATE plans)
   seatExtraAmount     Float?        // Seat extra charge
 
   // Settlement / Route transfer tracking

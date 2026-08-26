@@ -27,7 +27,10 @@ interface Library {
   hours: Array<{ dayOfWeek: number; isOpen: boolean; openTime?: string; closeTime?: string }>
   rules: Array<{ rule: string; order: number }>
   membershipPlans: Array<{ 
-    id: string; name: string; description?: string; price: number; 
+    id: string; name: string; description?: string; 
+    pricingModel?: string;
+    price: number; 
+    monthlyPrice?: number;
     dailyMinutes: number; durationValue: number; durationUnit: string; durationDays: number
     timeSelectionMode: string; fixedStartTime?: string; fixedEndTime?: string
     allowedDays: number[]; benefits: string[]; isActive: boolean
@@ -70,9 +73,13 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
 
   const TABS = ['overview', 'plans', 'seats', 'facilities', 'rules', 'reviews']
 
-  // The cheapest active plan — shown as the seat booking price
+  // The cheapest active plan — used for display purposes
   const lowestPlan = library.membershipPlans.length > 0
-    ? library.membershipPlans.reduce((a, b) => a.price <= b.price ? a : b)
+    ? library.membershipPlans.reduce((a, b) => {
+        const priceA = a.pricingModel === 'MONTHLY_RATE' ? (a.monthlyPrice ?? a.price) : a.price
+        const priceB = b.pricingModel === 'MONTHLY_RATE' ? (b.monthlyPrice ?? b.price) : b.price
+        return priceA <= priceB ? a : b
+      })
     : null
 
   return (
@@ -188,10 +195,10 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
             <div className="rounded-2xl bg-indigo-50 border border-indigo-100 p-4 space-y-2">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-indigo-600 shrink-0" />
-                <p className="font-bold text-indigo-900 text-sm">Study Plans Available</p>
+                <p className="font-bold text-indigo-900 text-sm">Choose Your Study Duration</p>
               </div>
               <p className="text-sm text-indigo-800 leading-relaxed">
-                Choose a study plan that fits your schedule. Each plan includes daily seat booking and membership access.
+                Select your preferred daily study hours. You'll choose how many months to purchase during booking.
               </p>
             </div>
 
@@ -199,49 +206,83 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
             {library.membershipPlans.length === 0 ? (
               <div className="rounded-2xl bg-amber-50 border border-amber-200 p-5 text-center">
                 <BookOpen className="h-8 w-8 text-amber-500 mx-auto mb-2" />
-                <p className="font-semibold text-amber-800 text-sm">No plans available</p>
+                <p className="font-semibold text-amber-800 text-sm">No pricing plans available</p>
                 <p className="text-xs text-amber-700 mt-1">This library hasn't set up pricing plans yet.</p>
               </div>
             ) : (
               <div className="space-y-3">
-                <h3 className="font-bold text-slate-900 text-sm">Available Study Plans</h3>
-                {library.membershipPlans.map(plan => (
-                  <div key={plan.id} className="rounded-2xl bg-white border border-slate-100 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <p className="font-bold text-slate-900">{plan.name}</p>
-                        {plan.description && <p className="text-xs text-slate-500 mt-0.5">{plan.description}</p>}
+                <h3 className="font-bold text-slate-900 text-sm">Available Daily Study Options</h3>
+                {library.membershipPlans.filter(p => p.isActive !== false).map(plan => {
+                  const isMonthlyRate = plan.pricingModel === 'MONTHLY_RATE'
+                  const displayPrice = isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : plan.price
+                  
+                  return (
+                    <div key={plan.id} className="rounded-2xl bg-white border border-slate-100 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div>
+                          <p className="font-bold text-slate-900">{plan.name}</p>
+                          {plan.description && <p className="text-xs text-slate-500 mt-0.5">{plan.description}</p>}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-2xl font-bold text-indigo-600">₹{displayPrice.toFixed(0)}</p>
+                          <p className="text-xs text-slate-500">{isMonthlyRate ? '/ month' : `for ${plan.durationValue} ${plan.durationUnit.toLowerCase()}(s)`}</p>
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-lg font-bold text-indigo-600">₹{plan.price.toFixed(0)}</p>
-                        <p className="text-[10px] text-slate-400">+5% platform fee</p>
+                      
+                      {/* Plan details */}
+                      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                        <div className="rounded-lg bg-indigo-50 px-3 py-2">
+                          <p className="text-indigo-500 mb-0.5 flex items-center gap-1"><Clock className="h-3 w-3" /> Daily Access</p>
+                          <p className="font-bold text-indigo-800">
+                            {Math.floor(plan.dailyMinutes / 60)}h {plan.dailyMinutes % 60 > 0 ? `${plan.dailyMinutes % 60}m` : ''}
+                          </p>
+                        </div>
+                        {isMonthlyRate ? (
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <p className="text-emerald-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
+                            <p className="font-bold text-emerald-800">You choose</p>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg bg-violet-50 px-3 py-2">
+                            <p className="text-violet-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
+                            <p className="font-bold text-violet-800">{plan.durationDays} days</p>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    
-                    {/* Plan details */}
-                    <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                      <div className="rounded-lg bg-indigo-50 px-3 py-2">
-                        <p className="text-indigo-500 mb-0.5 flex items-center gap-1"><Clock className="h-3 w-3" /> Daily</p>
-                        <p className="font-bold text-indigo-800">{Math.floor(plan.dailyMinutes / 60)}h {plan.dailyMinutes % 60 > 0 ? `${plan.dailyMinutes % 60}m` : ''}</p>
-                      </div>
-                      <div className="rounded-lg bg-violet-50 px-3 py-2">
-                        <p className="text-violet-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
-                        <p className="font-bold text-violet-800">{plan.durationDays} days</p>
-                      </div>
-                    </div>
 
-                    {/* Time mode */}
-                    <div className="text-xs mb-3">
-                      {plan.timeSelectionMode === 'FIXED' ? (
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-full font-medium">
-                          Fixed: {plan.fixedStartTime} – {plan.fixedEndTime}
-                        </span>
-                      ) : (
-                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full font-medium">
-                          Flexible timing
-                        </span>
+                      {/* Time mode */}
+                      <div className="text-xs mb-3">
+                        {plan.timeSelectionMode === 'FIXED' ? (
+                          <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-full font-medium">
+                            Fixed: {plan.fixedStartTime} – {plan.fixedEndTime}
+                          </span>
+                        ) : (
+                          <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-full font-medium">
+                            Flexible timing
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Pricing info for monthly rate */}
+                      {isMonthlyRate && displayPrice > 0 && (
+                        <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 mb-3 text-xs space-y-1">
+                          <p className="text-slate-600 font-medium">Example pricing:</p>
+                          <div className="grid grid-cols-3 gap-2 text-center">
+                            <div>
+                              <p className="text-slate-500">1 month</p>
+                              <p className="font-bold text-slate-900">₹{displayPrice.toFixed(0)}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500">3 months</p>
+                              <p className="font-bold text-slate-900">₹{(displayPrice * 3).toFixed(0)}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500">6 months</p>
+                              <p className="font-bold text-slate-900">₹{(displayPrice * 6).toFixed(0)}</p>
+                            </div>
+                          </div>
+                        </div>
                       )}
-                    </div>
 
                     {/* Benefits */}
                     {plan.benefits.length > 0 && (
@@ -263,10 +304,10 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
                       size="sm" 
                       onClick={() => router.push(`/student/library/${id}/book?plan=${plan.id}`)}
                     >
-                      Select This Plan
+                      {isMonthlyRate ? 'Choose This Rate' : 'Select This Plan'}
                     </Button>
                   </div>
-                ))}
+                )})}
               </div>
             )}
 

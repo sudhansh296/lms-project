@@ -14,10 +14,12 @@ interface Plan {
   id: string
   name: string
   description?: string
+  pricingModel: string
   dailyMinutes: number
-  durationValue: number
-  durationUnit: string
-  price: number
+  monthlyPrice?: number
+  durationValue?: number
+  durationUnit?: string
+  price?: number
   timeSelectionMode: string
   fixedStartTime?: string | null
   fixedEndTime?: string | null
@@ -28,7 +30,6 @@ interface Plan {
 }
 
 const DAYS_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const UNIT_LABELS: Record<string, string> = { DAY: 'Day(s)', WEEK: 'Week(s)', MONTH: 'Month(s)', YEAR: 'Year(s)' }
 
 function formatDailyMins(mins: number) {
   if (mins < 60) return `${mins} min/day`
@@ -37,15 +38,24 @@ function formatDailyMins(mins: number) {
   return m > 0 ? `${h}h ${m}m/day` : `${h} hr${h > 1 ? 's' : ''}/day`
 }
 
-const BLANK: Omit<Plan, 'id' | 'isActive' | '_count'> = {
-  name: '', description: '',
+const BLANK_MONTHLY = {
+  name: '',
+  description: '',
+  pricingModel: 'MONTHLY_RATE' as const,
   dailyMinutes: 120,
-  durationValue: 1, durationUnit: 'MONTH',
-  price: 0,
+  monthlyPrice: 0,
   timeSelectionMode: 'FLEXIBLE',
-  fixedStartTime: '', fixedEndTime: '',
+  fixedStartTime: '',
+  fixedEndTime: '',
   allowedDays: [0,1,2,3,4,5,6],
-  benefits: [],
+  benefits: [] as string[],
+}
+
+const UNIT_LABELS: Record<string, string> = {
+  'month': 'months',
+  'months': 'months',
+  'day': 'days',
+  'days': 'days',
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -56,7 +66,7 @@ export default function OwnerPricingPlansPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ ...BLANK })
+  const [form, setForm] = useState({ ...BLANK_MONTHLY })
   const [newBenefit, setNewBenefit] = useState('')
 
   const inp = 'w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500'
@@ -72,42 +82,63 @@ export default function OwnerPricingPlansPage() {
 
   const openCreate = () => {
     setEditingId(null)
-    setForm({ ...BLANK })
+    setForm({ ...BLANK_MONTHLY })
     setShowForm(true)
   }
 
   const openEdit = (p: Plan) => {
     setEditingId(p.id)
-    setForm({
+    const formData: typeof BLANK_MONTHLY & { price?: number; durationValue?: number; durationUnit?: string } = {
       name: p.name,
       description: p.description ?? '',
+      pricingModel: (p.pricingModel || 'MONTHLY_RATE') as 'MONTHLY_RATE',
       dailyMinutes: p.dailyMinutes,
-      durationValue: p.durationValue,
-      durationUnit: p.durationUnit,
-      price: p.price,
+      monthlyPrice: p.monthlyPrice ?? p.price ?? 0,
       timeSelectionMode: p.timeSelectionMode,
       fixedStartTime: p.fixedStartTime ?? '',
       fixedEndTime: p.fixedEndTime ?? '',
       allowedDays: p.allowedDays,
       benefits: p.benefits,
-    })
+    }
+    if (p.durationValue) formData.durationValue = p.durationValue
+    if (p.durationUnit) formData.durationUnit = p.durationUnit
+    if (p.price) formData.price = p.price
+    setForm(formData as typeof BLANK_MONTHLY)
     setShowForm(true)
   }
 
   const toggleDay = (d: number) => {
-    setForm(f => ({
+    setForm((f: typeof BLANK_MONTHLY) => ({
       ...f,
       allowedDays: f.allowedDays.includes(d)
-        ? f.allowedDays.filter(x => x !== d)
+        ? f.allowedDays.filter((x: number) => x !== d)
         : [...f.allowedDays, d].sort(),
     }))
   }
 
   const save = async () => {
+    const isMonthlyRate = form.pricingModel === 'MONTHLY_RATE'
+    
+    if (!form.name.trim() && isMonthlyRate) {
+      // Auto-generate name for monthly rate plans
+      const h = Math.floor(form.dailyMinutes / 60)
+      const m = form.dailyMinutes % 60
+      const tempForm: typeof form = { ...form }
+      tempForm.name = m > 0 ? `${h}h ${m}m / Day` : `${h} Hour${h > 1 ? 's' : ''} / Day`
+      setForm(tempForm)
+    }
+    
     if (!form.name.trim()) { toast.error('Plan name required'); return }
     if (form.dailyMinutes < 15) { toast.error('Min 15 minutes/day'); return }
-    if (form.price < 0) { toast.error('Price must be 0 or more'); return }
     if (form.allowedDays.length === 0) { toast.error('Select at least one day'); return }
+    
+    if (isMonthlyRate) {
+      if ((form.monthlyPrice ?? 0) < 0) { toast.error('Monthly price must be 0 or more'); return }
+    } else {
+      const price = (form as typeof form & { price?: number }).price ?? 0
+      if (price < 0) { toast.error('Price must be 0 or more'); return }
+    }
+    
     if (form.timeSelectionMode === 'FIXED') {
       if (!form.fixedStartTime || !form.fixedEndTime) { toast.error('Start and end time required for Fixed plans'); return }
       const [sh, sm] = form.fixedStartTime.split(':').map(Number)
@@ -119,11 +150,27 @@ export default function OwnerPricingPlansPage() {
 
     setSaving(true)
     try {
-      const payload = {
-        ...form,
+      const payload: Record<string, unknown> = {
+        name: form.name,
+        description: form.description,
+        pricingModel: form.pricingModel,
+        dailyMinutes: form.dailyMinutes,
+        timeSelectionMode: form.timeSelectionMode,
         fixedStartTime: form.timeSelectionMode === 'FIXED' ? form.fixedStartTime || null : null,
         fixedEndTime:   form.timeSelectionMode === 'FIXED' ? form.fixedEndTime   || null : null,
+        allowedDays: form.allowedDays,
+        benefits: form.benefits,
       }
+      
+      if (isMonthlyRate) {
+        payload.monthlyPrice = form.monthlyPrice
+      } else {
+        const extendedForm = form as typeof form & { price?: number; durationValue?: number; durationUnit?: string }
+        payload.price = extendedForm.price
+        payload.durationValue = extendedForm.durationValue
+        payload.durationUnit = extendedForm.durationUnit
+      }
+      
       const url = editingId ? `/api/owner/memberships/${editingId}` : '/api/owner/memberships'
       const method = editingId ? 'PATCH' : 'POST'
       const res = await fetch(url, {
@@ -155,13 +202,15 @@ export default function OwnerPricingPlansPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Seat Pricing Plans</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Monthly Rate Pricing</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Create your own study packages. You set the price — the platform adds a 5% fee on top for the student.
+            Set your monthly rate for each daily study duration. Students choose how many months to purchase.
+            <br />
+            <span className="text-slate-600 font-medium">Platform commission (5%) is deducted from your earnings, not added to the student.</span>
           </p>
         </div>
         <Button onClick={openCreate} className="gap-2">
-          <Plus className="h-4 w-4" /> Add Plan
+          <Plus className="h-4 w-4" /> Add Rate
         </Button>
       </div>
 
@@ -182,12 +231,12 @@ export default function OwnerPricingPlansPage() {
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Plan Name *</label>
                 <input className={inp} placeholder="e.g. Regular 2 Hour Plan"
-                  value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                  value={form.name} onChange={e => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, name: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
                 <input className={inp} placeholder="Optional short description"
-                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                  value={form.description} onChange={e => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, description: e.target.value }))} />
               </div>
             </div>
 
@@ -197,42 +246,30 @@ export default function OwnerPricingPlansPage() {
               <div className="flex items-center gap-2">
                 <input type="number" className={inp + ' w-24'} min="15" step="15"
                   value={form.dailyMinutes}
-                  onChange={e => setForm(f => ({ ...f, dailyMinutes: parseInt(e.target.value) || 60 }))} />
+                  onChange={e => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, dailyMinutes: parseInt(e.target.value) || 60 }))} />
                 <span className="text-slate-500 text-xs">minutes / day</span>
                 <span className="text-xs text-indigo-600 font-medium">({formatDailyMins(form.dailyMinutes)})</span>
               </div>
             </div>
 
-            {/* Duration */}
+            {/* Monthly Price (NEW MODEL) */}
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Plan Duration *</label>
-              <div className="flex items-center gap-2">
-                <input type="number" className={inp + ' w-24'} min="1"
-                  value={form.durationValue}
-                  onChange={e => setForm(f => ({ ...f, durationValue: parseInt(e.target.value) || 1 }))} />
-                <select className={inp + ' w-36'} value={form.durationUnit}
-                  onChange={e => setForm(f => ({ ...f, durationUnit: e.target.value }))}>
-                  <option value="DAY">Day(s)</option>
-                  <option value="WEEK">Week(s)</option>
-                  <option value="MONTH">Month(s)</option>
-                  <option value="YEAR">Year(s)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Price */}
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Package Price (₹) *</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Monthly Rate (₹) *</label>
               <div className="relative w-48">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
                 <input type="number" className={inp + ' pl-7'} min="0" step="1"
-                  value={form.price}
-                  onChange={e => setForm(f => ({ ...f, price: parseFloat(e.target.value) || 0 }))} />
+                  value={form.monthlyPrice ?? 0}
+                  onChange={e => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, monthlyPrice: parseFloat(e.target.value) || 0 }))} />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">/ month</span>
               </div>
-              {form.price > 0 && (
-                <p className="text-xs text-slate-400 mt-1">
-                  Student pays ₹{(form.price * 1.05).toFixed(2)} (₹{form.price} + 5% platform fee)
-                </p>
+              {(form.monthlyPrice ?? 0) > 0 && (
+                <div className="text-xs text-slate-500 mt-2 space-y-1">
+                  <p className="font-medium text-slate-700">Example Breakdown (1 month):</p>
+                  <p>Library charge: ₹{(form.monthlyPrice ?? 0).toFixed(2)}</p>
+                  <p>Platform commission (5%): ₹{((form.monthlyPrice ?? 0) * 0.05).toFixed(2)} <span className="text-amber-600">(deducted from you)</span></p>
+                  <p className="text-emerald-600 font-medium">You receive: ₹{((form.monthlyPrice ?? 0) * 0.95).toFixed(2)}</p>
+                  <p className="text-xs text-slate-400 mt-1">Student pays: ~₹{((form.monthlyPrice ?? 0) * 1.0236).toFixed(2)} (includes gateway fee)</p>
+                </div>
               )}
             </div>
 
@@ -247,7 +284,7 @@ export default function OwnerPricingPlansPage() {
                   <label key={opt.val} className="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="timeMode" value={opt.val}
                       checked={form.timeSelectionMode === opt.val}
-                      onChange={() => setForm(f => ({ ...f, timeSelectionMode: opt.val }))} />
+                      onChange={() => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, timeSelectionMode: opt.val }))} />
                     <span className="text-sm text-slate-700">{opt.label}</span>
                   </label>
                 ))}
@@ -264,7 +301,7 @@ export default function OwnerPricingPlansPage() {
                         const endMins = sh * 60 + sm + form.dailyMinutes
                         const eh = Math.floor(endMins / 60).toString().padStart(2, '0')
                         const em = (endMins % 60).toString().padStart(2, '0')
-                        setForm(f => ({ ...f, fixedStartTime: st, fixedEndTime: `${eh}:${em}` }))
+                        setForm((f: typeof BLANK_MONTHLY) => ({ ...f, fixedStartTime: st, fixedEndTime: `${eh}:${em}` }))
                       }} />
                   </div>
                   <span className="text-slate-400 mt-4">→</span>
@@ -302,23 +339,23 @@ export default function OwnerPricingPlansPage() {
                   value={newBenefit} onChange={e => setNewBenefit(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && newBenefit.trim()) {
-                      setForm(f => ({ ...f, benefits: [...f.benefits, newBenefit.trim()] }))
+                      setForm((f: typeof BLANK_MONTHLY) => ({ ...f, benefits: [...f.benefits, newBenefit.trim()] }))
                       setNewBenefit('')
                       e.preventDefault()
                     }
                   }} />
                 <Button size="sm" type="button" variant="outline" onClick={() => {
                   if (newBenefit.trim()) {
-                    setForm(f => ({ ...f, benefits: [...f.benefits, newBenefit.trim()] }))
+                    setForm((f: typeof BLANK_MONTHLY) => ({ ...f, benefits: [...f.benefits, newBenefit.trim()] }))
                     setNewBenefit('')
                   }
                 }}>Add</Button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {form.benefits.map((b, i) => (
+                {form.benefits.map((b: string, i: number) => (
                   <span key={i} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded-full">
                     {b}
-                    <button onClick={() => setForm(f => ({ ...f, benefits: f.benefits.filter((_, j) => j !== i) }))}>
+                    <button onClick={() => setForm((f: typeof BLANK_MONTHLY) => ({ ...f, benefits: f.benefits.filter((_: string, j: number) => j !== i) }))}>
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -370,7 +407,7 @@ export default function OwnerPricingPlansPage() {
                 </div>
                 <div className="rounded-lg bg-violet-50 px-3 py-2">
                   <p className="text-violet-500 mb-0.5 flex items-center gap-1"><Calendar className="h-3 w-3" /> Duration</p>
-                  <p className="font-bold text-violet-800">{plan.durationValue} {UNIT_LABELS[plan.durationUnit]}</p>
+                  <p className="font-bold text-violet-800">{plan.durationValue} {plan.durationUnit && UNIT_LABELS[plan.durationUnit] ? UNIT_LABELS[plan.durationUnit] : ''}</p>
                 </div>
               </div>
 
@@ -393,11 +430,20 @@ export default function OwnerPricingPlansPage() {
               {/* Price */}
               <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                 <div>
-                  <p className="text-xl font-bold text-slate-900">₹{plan.price.toFixed(0)}</p>
-                  <p className="text-[10px] text-slate-400">Student pays ₹{(plan.price * 1.05).toFixed(2)}</p>
+                  {plan.pricingModel === 'MONTHLY_RATE' ? (
+                    <>
+                      <p className="text-xl font-bold text-slate-900">₹{(plan.monthlyPrice ?? 0).toFixed(0)}<span className="text-sm text-slate-500">/mo</span></p>
+                      <p className="text-[10px] text-emerald-600">You get ₹{((plan.monthlyPrice ?? 0) * 0.95).toFixed(2)}/mo (after 5%)</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xl font-bold text-slate-900">₹{(plan.price ?? 0).toFixed(0)}</p>
+                      <p className="text-[10px] text-slate-400">{plan.durationValue} {plan.durationUnit?.toLowerCase()}</p>
+                    </>
+                  )}
                 </div>
                 <div className="text-xs text-slate-400">
-                  {plan._count?.bookings ?? 0} active booking{(plan._count?.bookings ?? 0) !== 1 ? 's' : ''}
+                  {plan._count?.bookings ?? 0} booking{(plan._count?.bookings ?? 0) !== 1 ? 's' : ''}
                 </div>
               </div>
 

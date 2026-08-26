@@ -19,9 +19,11 @@ interface ActiveBooking {
   totalAmount: number
   library: { id: string; name: string; city: string }
   seat: { label: string; seatType: string }
-  plan?: { name: string; price: number } | null
+  plan?: { name: string; price: number; pricingModel?: string; monthlyPrice?: number } | null
   planNameSnapshot?: string | null
   planPriceSnapshot?: number | null
+  monthlyPriceSnapshot?: number | null
+  selectedMonths?: number | null
   dailyMinutesSnapshot?: number | null
 }
 
@@ -66,7 +68,7 @@ export default function StudentExpiryPage() {
     }
   }
 
-  const formatDailyTime = (start: string, end: string, minutes?: number) => {
+  const formatDailyTime = (start: string, end: string, minutes?: number | null) => {
     if (minutes && minutes > 0) {
       const h = Math.floor(minutes / 60)
       const m = minutes % 60
@@ -104,6 +106,11 @@ export default function StudentExpiryPage() {
   const isExpired = new Date(activeBooking.endDate || activeBooking.endTime) < new Date()
   const planName = activeBooking.plan?.name || activeBooking.planNameSnapshot || 'Study Plan'
   const planPrice = activeBooking.plan?.price || activeBooking.planPriceSnapshot || 0
+  
+  // Check if this is a monthly rate booking
+  const isMonthlyRate = activeBooking.monthlyPriceSnapshot !== null && activeBooking.monthlyPriceSnapshot !== undefined
+  const monthlyPrice = activeBooking.monthlyPriceSnapshot || 0
+  const selectedMonths = activeBooking.selectedMonths || 1
 
   return (
     <div className="px-4 py-4 space-y-4">
@@ -206,15 +213,46 @@ export default function StudentExpiryPage() {
           </div>
 
           {/* Plan Cost */}
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <span className="text-sm text-slate-500">Plan Cost</span>
-            <div className="text-right">
-              <p className="font-bold text-slate-900 text-sm">₹{activeBooking.totalAmount.toFixed(0)}</p>
-              {planPrice > 0 && planPrice !== activeBooking.totalAmount && (
-                <p className="text-xs text-slate-500">base: ₹{planPrice.toFixed(0)}</p>
-              )}
+          {isMonthlyRate ? (
+            <>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Monthly Rate</span>
+                <div className="text-right">
+                  <p className="font-bold text-slate-900 text-sm">₹{monthlyPrice.toFixed(0)}/month</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Duration Purchased</span>
+                <div className="text-right">
+                  <p className="font-bold text-slate-900 text-sm">{selectedMonths} month{selectedMonths > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Plan Amount</span>
+                <div className="text-right">
+                  <p className="font-bold text-slate-900 text-sm">₹{(monthlyPrice * selectedMonths).toFixed(0)}</p>
+                  <p className="text-xs text-slate-500">₹{monthlyPrice.toFixed(0)} × {selectedMonths}</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Total Paid</span>
+                <div className="text-right">
+                  <p className="font-bold text-indigo-600 text-base">₹{activeBooking.totalAmount.toFixed(0)}</p>
+                  <p className="text-xs text-slate-500">incl. gateway fees</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <span className="text-sm text-slate-500">Plan Cost</span>
+              <div className="text-right">
+                <p className="font-bold text-slate-900 text-sm">₹{activeBooking.totalAmount.toFixed(0)}</p>
+                {planPrice > 0 && planPrice !== activeBooking.totalAmount && (
+                  <p className="text-xs text-slate-500">base: ₹{planPrice.toFixed(0)}</p>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Status */}
           <div className="flex items-center justify-between">

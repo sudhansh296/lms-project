@@ -61,14 +61,14 @@ export async function GET(request: NextRequest) {
     }
 
     const [total, membershipRev, bookingRev, refunds] = await Promise.all([
-      prisma.payment.aggregate({ where: paymentFilter, _sum: { amount: true } }),
+      prisma.payment.aggregate({ where: paymentFilter, _sum: { ownerAmount: true } }),
       prisma.payment.aggregate({
         where: { ...paymentFilter, membershipId: { not: null } },
-        _sum: { amount: true },
+        _sum: { ownerAmount: true },
       }),
       prisma.payment.aggregate({
         where: { ...paymentFilter, bookingId: { not: null } },
-        _sum: { amount: true },
+        _sum: { ownerAmount: true },
       }),
       prisma.payment.aggregate({
         where: {
@@ -96,18 +96,18 @@ export async function GET(request: NextRequest) {
               { membership: { libraryId: library.id } },
             ],
           },
-          _sum: { amount: true },
+          _sum: { ownerAmount: true },
         })
-        return { label: format(d, 'MMM yy'), amount: res._sum.amount ?? 0 }
+        return { label: format(d, 'MMM yy'), amount: res._sum.ownerAmount ?? 0 }
       })
     )
 
     return Response.json({
-      total: total._sum.amount ?? 0,
-      membershipRevenue: membershipRev._sum.amount ?? 0,
-      bookingRevenue: bookingRev._sum.amount ?? 0,
+      total: total._sum.ownerAmount ?? 0,
+      membershipRevenue: membershipRev._sum.ownerAmount ?? 0,
+      bookingRevenue: bookingRev._sum.ownerAmount ?? 0,
       refunds: refunds._sum.refundAmount ?? 0,
-      net: (total._sum.amount ?? 0) - (refunds._sum.refundAmount ?? 0),
+      net: (total._sum.ownerAmount ?? 0) - (refunds._sum.refundAmount ?? 0),
       monthly,
     })
   } catch (error: unknown) {

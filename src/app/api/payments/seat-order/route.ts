@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(['STUDENT'])
     const body = await request.json()
-    const { libraryId, planId, seatId, startDate, dailyStartTime } = body
+    const { libraryId, planId, seatId, startDate, dailyStartTime, months } = body
 
     if (!libraryId || !planId || !seatId || !startDate) {
       return Response.json({ error: 'Missing required fields: libraryId, planId, seatId, startDate' }, { status: 400 })
@@ -61,6 +61,21 @@ export async function POST(request: NextRequest) {
     })
     if (!plan) {
       return Response.json({ error: 'Pricing plan not found or inactive' }, { status: 404 })
+    }
+
+    // For MONTHLY_RATE plans, months parameter is required
+    const isMonthlyRate = plan.pricingModel === 'MONTHLY_RATE'
+    let selectedMonths = 1
+    let effectiveDurationValue = plan.durationValue
+    let effectiveDurationUnit = plan.durationUnit as 'DAY'|'WEEK'|'MONTH'|'YEAR'
+    
+    if (isMonthlyRate) {
+      if (!months || typeof months !== 'number' || months < 1 || months > 24) {
+        return Response.json({ error: 'For monthly rate plans, months parameter is required (1-24)' }, { status: 400 })
+      }
+      selectedMonths = Math.floor(months)
+      effectiveDurationValue = selectedMonths
+      effectiveDurationUnit = 'MONTH'
     }
 
     // ── 4. Verify seat ────────────────────────────────────────────────────────
@@ -97,7 +112,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Start date cannot be in the past' }, { status: 400 })
     }
 
-    const endDate = calcPlanEndDate(parsedStart, plan.durationValue, plan.durationUnit as 'DAY'|'WEEK'|'MONTH'|'YEAR')
+    const endDate = calcPlanEndDate(parsedStart, effectiveDurationValue, effectiveDurationUnit)
     // endDate is exclusive (e.g. 1 month from Sep 1 = Oct 1), subtract 1 day for last occurrence
     const lastDay = new Date(endDate)
     lastDay.setUTCDate(lastDay.getUTCDate() - 1)
@@ -181,13 +196,25 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 11. Calculate price (server-side, never from frontend) ────────────────
-    const breakdown = calculatePaymentBreakdown(plan.price, seat.extraPrice ?? 0)
+    // For MONTHLY_RATE plans: libraryBaseAmount = (monthlyPrice × selectedMonths) + seatExtra
+    // For LEGACY_PACKAGE plans: libraryBaseAmount = price + seatExtra
+    const planBasePrice = isMonthlyRate 
+      ? (plan.monthlyPrice ?? plan.price) * selectedMonths
+      : plan.price
+    
+    const breakdown = calculatePaymentBreakdown(planBasePrice, seat.extraPrice ?? 0, {
+      months: isMonthlyRate ? selectedMonths : undefined,
+      monthlyPrice: isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : undefined,
+    })
     const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000)
 
     // ── 12. Snapshots (immutable record of what was purchased) ────────────────
-    const durationSnapshot = `${plan.durationValue} ${plan.durationUnit}`
+    const durationSnapshot = isMonthlyRate 
+      ? `${selectedMonths} MONTH`
+      : `${plan.durationValue} ${plan.durationUnit}`
     const planNameSnapshot      = plan.name
-    const planPriceSnapshot     = plan.price
+    const planPriceSnapshot     = planBasePrice
+    const monthlyPriceSnapshot  = isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : null
     const seatExtraSnapshot     = seat.extraPrice ?? 0
     const dailyMinutesSnapshot  = plan.dailyMinutes
 
@@ -201,6 +228,8 @@ export async function POST(request: NextRequest) {
           dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
           planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
           dailyMinutesSnapshot, durationSnapshot,
+          selectedMonths: isMonthlyRate ? selectedMonths : null,
+          monthlyPriceSnapshot,
           bookingDate: parsedStart,
           startTime: occurrences[0].startTime,
           endTime:   occurrences[occurrences.length - 1].endTime,
@@ -224,14 +253,26 @@ export async function POST(request: NextRequest) {
           amount: 0, status: 'PAID',
           paymentMethod: 'FREE', paymentType: 'SEAT_BOOKING',
           planPrice: 0, seatExtraAmount: 0,
+          monthlyPrice: monthlyPriceSnapshot,
+          selectedMonths: isMonthlyRate ? selectedMonths : null,
           baseAmount: 0, platformFee: 0, processingFee: 0, gstAmount: 0, ownerAmount: 0,
+          gatewayFee: 0, gatewayFeeGst: 0,
           settlementStatus: 'NOT_REQUIRED',
         },
       })
       return Response.json({
         free: true,
         bookingId: booking.id, bookingRef: booking.bookingRef,
-        plan: { name: planNameSnapshot, dailyMinutes: plan.dailyMinutes, startDate: parsedStart, endDate: lastDay, dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd },
+        plan: { 
+          name: planNameSnapshot, 
+          dailyMinutes: plan.dailyMinutes, 
+          startDate: parsedStart, 
+          endDate: lastDay, 
+          dailyStartTime: resolvedDailyStart, 
+          dailyEndTime: resolvedDailyEnd,
+          durationValue: effectiveDurationValue,
+          durationUnit: effectiveDurationUnit,
+        },
         breakdown,
       })
     }
@@ -245,6 +286,8 @@ export async function POST(request: NextRequest) {
         dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
         planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
         dailyMinutesSnapshot, durationSnapshot,
+        selectedMonths: isMonthlyRate ? selectedMonths : null,
+        monthlyPriceSnapshot,
         bookingDate: parsedStart,
         startTime: occurrences[0].startTime,
         endTime:   occurrences[occurrences.length - 1].endTime,
@@ -269,7 +312,7 @@ export async function POST(request: NextRequest) {
     let order
     try {
       order = await razorpay.orders.create({
-        amount: toPaise(breakdown.totalAmount),
+        amount: toPaise(breakdown.studentTotal ?? breakdown.totalAmount),
         currency: 'INR',
         receipt: `rcpt_${booking.id.slice(-8)}`,
         notes: { bookingId: booking.id, studentId: session.id, libraryId, planId, seatId, type: 'SEAT_BOOKING' },
@@ -287,12 +330,20 @@ export async function POST(request: NextRequest) {
     await prisma.payment.create({
       data: {
         studentId: session.id, bookingId: booking.id,
-        amount: breakdown.totalAmount, status: 'PENDING',
+        amount: breakdown.studentTotal ?? breakdown.totalAmount, 
+        status: 'PENDING',
         paymentMethod: 'RAZORPAY', paymentType: 'SEAT_BOOKING',
         gatewayOrderId: order.id,
-        planPrice: breakdown.planPrice, seatExtraAmount: breakdown.seatExtraAmount,
-        baseAmount: breakdown.baseAmount, platformFee: breakdown.platformFee,
-        processingFee: breakdown.processingFee, gstAmount: breakdown.gstAmount,
+        planPrice: breakdown.planPrice ?? planBasePrice, 
+        seatExtraAmount: breakdown.seatExtraAmount,
+        monthlyPrice: monthlyPriceSnapshot,
+        selectedMonths: isMonthlyRate ? selectedMonths : null,
+        baseAmount: breakdown.baseAmount ?? breakdown.libraryBaseAmount, 
+        platformFee: breakdown.platformFee ?? breakdown.platformCommission,
+        processingFee: breakdown.processingFee ?? 0, 
+        gstAmount: breakdown.gstAmount ?? 0,
+        gatewayFee: breakdown.gatewayFee ?? 0,
+        gatewayFeeGst: breakdown.gatewayFeeGst ?? 0,
         ownerAmount: breakdown.ownerAmount,
         settlementStatus: 'NOT_REQUIRED', transferAttempts: 0,
       },
@@ -312,8 +363,8 @@ export async function POST(request: NextRequest) {
         endDate:   lastDay.toISOString().slice(0,10),
         dailyStartTime: resolvedDailyStart,
         dailyEndTime:   resolvedDailyEnd,
-        durationValue: plan.durationValue,
-        durationUnit: plan.durationUnit,
+        durationValue: effectiveDurationValue,
+        durationUnit: effectiveDurationUnit,
         occurrenceCount: occurrences.length,
       },
       breakdown,

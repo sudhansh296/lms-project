@@ -38,17 +38,14 @@ export async function GET(
             startTime: { lt: end },
             endTime:   { gt: start },
           },
-          include: {
+          select: {
+            seatId: true,
             booking: {
               select: {
                 status: true,
                 holdExpiresAt: true,
               },
             },
-          },
-          select: {
-            seatId: true,
-            booking: { select: { status: true, holdExpiresAt: true } },
           },
         }),
         prisma.booking.findMany({
