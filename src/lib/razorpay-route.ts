@@ -188,7 +188,9 @@ export async function requestRouteProduct(accountId: string): Promise<RzpRoutePr
   return rzpFetch<RzpRouteProduct>('POST', `/v2/accounts/${accountId}/products`, {
     product_name: 'route',
     requested_at: Math.floor(Date.now() / 1000),
-    tnc_accepted: true,
+    // P1-9 TODO: tnc_accepted should come from owner's explicit consent
+    // Currently hardcoded - requires UI checkbox + database field
+    tnc_accepted: true, // FIXME: Get from owner consent
   })
 }
 

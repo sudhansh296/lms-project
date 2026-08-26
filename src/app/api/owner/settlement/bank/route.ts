@@ -56,7 +56,9 @@ export async function POST(request: NextRequest) {
           ifsc_code: ifscCode.toUpperCase(),
           beneficiary_name: beneficiaryName,
         },
-        tnc_accepted: true,
+        // P1-9 TODO: tnc_accepted should come from owner's explicit consent
+        // Currently hardcoded - requires UI checkbox + database field  
+        tnc_accepted: true, // FIXME: Get from owner consent
       }
     )
 

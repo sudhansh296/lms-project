@@ -9,10 +9,10 @@ export const REFERRAL_THRESHOLDS = {
   STANDARD: 0,
   LEVEL_1: 20,
   LEVEL_2: 50,
-  LEVEL_3: 100,
+  // P1-8: LEVEL_3 removed - only 3 tiers now
 } as const
 
-export type OwnerMembershipLevel = 'STANDARD' | 'LEVEL_1' | 'LEVEL_2' | 'LEVEL_3'
+export type OwnerMembershipLevel = 'STANDARD' | 'LEVEL_1' | 'LEVEL_2' // LEVEL_3 removed
 
 /** null = unlimited */
 export interface LevelBenefits {
@@ -68,26 +68,11 @@ export const LEVEL_BENEFITS: Record<OwnerMembershipLevel, LevelBenefits> = {
       'Revenue reports',
     ],
   },
-  LEVEL_3: {
-    maxBranches: null,
-    maxSeats: null,
-    analytics: 'full',
-    revenueReports: true,
-    featuredListing: true,
-    prioritySupport: true,
-    features: [
-      'Unlimited branches',
-      'Unlimited seats',
-      'Full analytics + revenue',
-      'Featured listing',
-      'Priority support',
-    ],
-  },
+  // P1-8: LEVEL_3 removed
 }
 
 /** Derive membership level from a count of qualified referrals */
 export function getMembershipLevel(qualifiedCount: number): OwnerMembershipLevel {
-  if (qualifiedCount >= REFERRAL_THRESHOLDS.LEVEL_3) return 'LEVEL_3'
   if (qualifiedCount >= REFERRAL_THRESHOLDS.LEVEL_2) return 'LEVEL_2'
   if (qualifiedCount >= REFERRAL_THRESHOLDS.LEVEL_1) return 'LEVEL_1'
   return 'STANDARD'
@@ -105,10 +90,8 @@ export function getNextLevelInfo(qualifiedCount: number): {
   if (qualifiedCount < REFERRAL_THRESHOLDS.LEVEL_2) {
     return { nextLevel: 'LEVEL_2', needed: REFERRAL_THRESHOLDS.LEVEL_2 - qualifiedCount, threshold: REFERRAL_THRESHOLDS.LEVEL_2 }
   }
-  if (qualifiedCount < REFERRAL_THRESHOLDS.LEVEL_3) {
-    return { nextLevel: 'LEVEL_3', needed: REFERRAL_THRESHOLDS.LEVEL_3 - qualifiedCount, threshold: REFERRAL_THRESHOLDS.LEVEL_3 }
-  }
-  return { nextLevel: null, needed: 0, threshold: REFERRAL_THRESHOLDS.LEVEL_3 }
+  // P1-8: LEVEL_2 is now the maximum
+  return { nextLevel: null, needed: 0, threshold: REFERRAL_THRESHOLDS.LEVEL_2 }
 }
 
 /** Generate a unique referral code like STUDYLIB-A82K9 */
@@ -141,7 +124,7 @@ export const LEVEL_LABELS: Record<OwnerMembershipLevel, string> = {
   STANDARD: 'Standard',
   LEVEL_1: 'Level 1',
   LEVEL_2: 'Level 2',
-  LEVEL_3: 'Level 3',
+  // P1-8: LEVEL_3 removed
 }
 
 /** Badge colors for each level */
@@ -149,5 +132,5 @@ export const LEVEL_COLORS: Record<OwnerMembershipLevel, string> = {
   STANDARD: 'bg-slate-100 text-slate-700',
   LEVEL_1: 'bg-blue-100 text-blue-700',
   LEVEL_2: 'bg-violet-100 text-violet-700',
-  LEVEL_3: 'bg-amber-100 text-amber-700',
+  // P1-8: LEVEL_3 removed
 }
