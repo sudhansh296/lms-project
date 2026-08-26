@@ -21,7 +21,8 @@ export async function POST(request: NextRequest) {
     })
     if (!booking) return Response.json({ error: 'Booking not found' }, { status: 404 })
 
-    // Find today's occurrence for this booking
+    // P0-4 FIX: Find today's CONFIRMED occurrence for this booking
+    // HELD occurrences are rejected - only CONFIRMED bookings can check in
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const tomorrow = new Date(today)
@@ -34,13 +35,13 @@ export async function POST(request: NextRequest) {
           gte: today,
           lt: tomorrow,
         },
-        status: { in: ['HELD', 'CONFIRMED'] }, // Only allow check-in for active occurrences
+        status: 'CONFIRMED', // P0-4: Only CONFIRMED occurrences, not HELD
       },
     })
 
     if (!todayOccurrence) {
       return Response.json({ 
-        error: 'No active booking occurrence found for today' 
+        error: 'No confirmed booking occurrence found for today. Payment confirmation required.' 
       }, { status: 404 })
     }
 
@@ -91,7 +92,14 @@ export async function POST(request: NextRequest) {
         data: { status: 'COMPLETED' },
       })
 
-      // Check if there are any future occurrences still active
+      // P0-5 FIX: Set seat AVAILABLE immediately after checkout
+      // Physical seat is freed NOW, future occurrences are tracked via BookingOccurrence
+      await prisma.seat.update({ 
+        where: { id: booking.seatId }, 
+        data: { status: 'AVAILABLE' } 
+      })
+
+      // P0-6 FIX: Complete parent Booking only when final occurrence completes
       const futureOccurrences = await prisma.bookingOccurrence.findMany({
         where: {
           bookingId,
@@ -100,11 +108,11 @@ export async function POST(request: NextRequest) {
         },
       })
 
-      // Only mark seat AVAILABLE if no future occurrences exist
+      // If no more future confirmed/held occurrences, mark parent Booking as COMPLETED
       if (futureOccurrences.length === 0) {
-        await prisma.seat.update({ 
-          where: { id: booking.seatId }, 
-          data: { status: 'AVAILABLE' } 
+        await prisma.booking.update({
+          where: { id: bookingId },
+          data: { status: 'COMPLETED' },
         })
       }
 

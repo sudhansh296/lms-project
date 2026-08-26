@@ -44,12 +44,6 @@ export async function POST(request: NextRequest) {
       }, { status: 401 })
     }
 
-    // P0-1: Check if token was already used (single-use enforcement)
-    const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!)
-    if (!consumeResult.consumed) {
-      return Response.json({ error: consumeResult.error }, { status: 401 })
-    }
-
     // FIX 6: Check only for existing STUDENT account with this mobile
     const existingStudent = await prisma.user.findFirst({ 
       where: { mobile, role: 'STUDENT' } 
@@ -75,19 +69,29 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await hashPassword(password)
 
-    // FIX 18: Create user and student atomically
-    const user = await prisma.user.create({
-      data: {
-        mobile,
-        name,
-        email: normalizedEmailValue,
-        passwordHash,
-        role: 'STUDENT',
-        student: {
-          create: {},
+    // P0-3: Use transaction to atomically consume OTP and create user
+    // If user creation fails, OTP consumption is rolled back
+    const user = await prisma.$transaction(async (tx) => {
+      // P0-1: Check if token was already used (single-use enforcement)
+      const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!, tx)
+      if (!consumeResult.consumed) {
+        throw new Error(consumeResult.error || 'Failed to consume verification token')
+      }
+
+      // FIX 18: Create user and student atomically
+      return await tx.user.create({
+        data: {
+          mobile,
+          name,
+          email: normalizedEmailValue,
+          passwordHash,
+          role: 'STUDENT',
+          student: {
+            create: {},
+          },
         },
-      },
-      include: { student: true },
+        include: { student: true },
+      })
     })
 
     // FIX 20-21: Create session for new STUDENT account

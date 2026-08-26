@@ -228,35 +228,57 @@ export function verifyVerificationToken(
 }
 
 /**
- * P0-1: Mark OTP verification as consumed (single-use enforcement)
+ * P0-1, P0-3: Mark OTP verification as consumed (single-use enforcement)
+ * Uses updateMany with count check for true atomicity
+ * Must be called within a transaction with user creation to ensure rollback on failure
  */
-export async function consumeOtpVerification(otpRecordId: string): Promise<{ consumed: boolean; error?: string }> {
+export async function consumeOtpVerification(
+  otpRecordId: string,
+  tx?: any // Prisma transaction client
+): Promise<{ consumed: boolean; error?: string }> {
   try {
-    const record = await prisma.otpVerification.findUnique({
-      where: { id: otpRecordId },
-      select: { consumedAt: true, verified: true },
+    const client = tx ?? prisma
+    
+    // P0-3: Use updateMany to atomically check and update
+    // Only updates if consumedAt is NULL (not yet consumed)
+    const result = await client.otpVerification.updateMany({
+      where: {
+        id: otpRecordId,
+        verified: true,
+        consumedAt: null, // Critical: only update if not yet consumed
+      },
+      data: {
+        consumedAt: new Date(),
+      },
     })
 
-    if (!record) {
-      return { consumed: false, error: 'OTP verification record not found' }
-    }
+    // If count is 0, the OTP was either not found, not verified, or already consumed
+    if (result.count === 0) {
+      // Determine the specific error
+      const record = await client.otpVerification.findUnique({
+        where: { id: otpRecordId },
+        select: { consumedAt: true, verified: true },
+      })
 
-    if (!record.verified) {
-      return { consumed: false, error: 'OTP was not verified' }
-    }
+      if (!record) {
+        return { consumed: false, error: 'OTP verification record not found' }
+      }
 
-    if (record.consumedAt) {
-      return { consumed: false, error: 'Verification token has already been used' }
-    }
+      if (!record.verified) {
+        return { consumed: false, error: 'OTP was not verified' }
+      }
 
-    // Mark as consumed atomically
-    await prisma.otpVerification.update({
-      where: { id: otpRecordId },
-      data: { consumedAt: new Date() },
-    })
+      if (record.consumedAt) {
+        return { consumed: false, error: 'Verification token has already been used' }
+      }
+
+      // Shouldn't reach here, but safety fallback
+      return { consumed: false, error: 'Failed to consume verification token' }
+    }
 
     return { consumed: true }
-  } catch {
+  } catch (error) {
+    console.error('consumeOtpVerification error:', error)
     return { consumed: false, error: 'Failed to consume verification token' }
   }
 }

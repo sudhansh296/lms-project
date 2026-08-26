@@ -151,6 +151,8 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // P0-7 FIX: Manual bookings must create ONE BookingOccurrence
+    // This ensures consistency with recurring bookings and attendance tracking
     const booking = await prisma.booking.create({
       data: {
         libraryId: library.id,
@@ -161,6 +163,16 @@ export async function POST(request: NextRequest) {
         endTime: end,
         status: 'CONFIRMED',
         totalAmount: amount ?? 0,
+        // P0-7: Create single occurrence for manual booking
+        occurrences: {
+          create: {
+            seatId,
+            date: start,
+            startTime: start,
+            endTime: end,
+            status: 'CONFIRMED', // Manual bookings are immediately confirmed
+          },
+        },
         payment: paymentMethod
           ? {
               create: {
@@ -169,20 +181,27 @@ export async function POST(request: NextRequest) {
                 status: 'PAID',
                 paymentMethod: paymentMethod.toUpperCase(),
                 paymentType: 'SEAT_BOOKING',
+                // P0-8 FIX: Offline payments have explicit settlementStatus = NOT_REQUIRED
+                settlementStatus: 'NOT_REQUIRED',
                 // P0-6: Offline payments never have gateway IDs
                 gatewayOrderId: null,
                 gatewayPaymentId: null,
                 gatewaySignature: null,
                 gatewayTransferId: null,
                 baseAmount: amount ?? 0,
-                // Offline payments don't trigger settlement
+                // P0-8: Offline payments don't trigger commission split
                 platformFee: null,
                 ownerAmount: null,
               },
             }
           : undefined,
       },
-      include: { student: { include: { user: true } }, seat: true, payment: true },
+      include: { 
+        student: { include: { user: true } }, 
+        seat: true, 
+        payment: true,
+        occurrences: true, // Include the created occurrence
+      },
     })
 
     await createAuditLog({

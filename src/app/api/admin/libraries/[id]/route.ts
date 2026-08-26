@@ -111,11 +111,27 @@ export async function PATCH(
         }
       }
 
+      // P0-9 FIX: When account ID changes, reset all onboarding state
+      // Get current account ID to detect changes
+      const currentOwner = await prisma.libraryOwner.findUnique({
+        where: { id: library.ownerId },
+        select: { razorpayAccountId: true },
+      })
+
+      const isAccountChanging = currentOwner?.razorpayAccountId !== razorpayAccountId
+
       await prisma.libraryOwner.update({
         where: { id: library.ownerId },
         data: {
           razorpayAccountId: razorpayAccountId || null,
           razorpayAccountStatus: razorpayAccountId ? 'ACTIVE' : 'PENDING',
+          // P0-9: Reset onboarding state when account changes
+          ...(isAccountChanging && razorpayAccountId ? {
+            settlementReady: false,
+            razorpayProductId: null,
+            razorpayStakeholderId: null,
+            razorpayActivationStatus: 'IN_PROGRESS',
+          } : {}),
         },
       })
 

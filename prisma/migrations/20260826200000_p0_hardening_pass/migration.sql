@@ -27,8 +27,8 @@ BEGIN
   END IF;
 END $$;
 
--- Step 3: Drop old global unique constraints if they exist
--- Note: Prisma-generated constraint names may vary
+-- Step 3: Drop old global unique constraints AND indexes if they exist
+-- Note: PostgreSQL unique constraints create indexes, and standalone indexes may also exist
 DO $$ 
 BEGIN
     -- Drop mobile unique constraint
@@ -47,7 +47,7 @@ BEGIN
         ALTER TABLE "users" DROP CONSTRAINT "users_email_key";
     END IF;
 
-    -- Also check for alternative naming patterns
+    -- Also check for alternative constraint naming patterns
     IF EXISTS (
         SELECT 1 FROM pg_constraint 
         WHERE conname LIKE 'User_mobile_key%'
@@ -68,6 +68,12 @@ BEGIN
         ) || '"';
     END IF;
 END $$;
+
+-- Drop any standalone unique indexes that may exist independently
+DROP INDEX IF EXISTS "users_mobile_key";
+DROP INDEX IF EXISTS "users_email_key";
+DROP INDEX IF EXISTS "User_mobile_key";
+DROP INDEX IF EXISTS "User_email_key";
 
 -- Step 4: Create compound unique constraints for role-scoped uniqueness
 -- Same mobile can exist with different roles (e.g., STUDENT and LIBRARY_OWNER)

@@ -53,36 +53,9 @@ export async function POST(request: NextRequest) {
       }, { status: 401 })
     }
 
-    // P0-1: Check if token was already used (single-use enforcement)
-    const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!)
-    if (!consumeResult.consumed) {
-      return Response.json({ error: consumeResult.error }, { status: 401 })
-    }
-
-    // FIX 7: Check only for existing LIBRARY_OWNER account with this mobile
-    const existingOwner = await prisma.user.findFirst({ 
-      where: { mobile, role: 'LIBRARY_OWNER' } 
-    })
-    if (existingOwner) {
-      return Response.json({ 
-        error: 'Library owner account already exists with this mobile number' 
-      }, { status: 409 })
-    }
-
-    // FIX 2: Normalize email and check role-scoped uniqueness
+    // FIX 2: Normalize email values
     const normalizedEmailValue = normalizeEmail(email)
     const normalizedLibraryEmail = normalizeEmail(libraryEmail)
-    
-    if (normalizedEmailValue) {
-      const emailExists = await prisma.user.findFirst({ 
-        where: { email: normalizedEmailValue, role: 'LIBRARY_OWNER' } 
-      })
-      if (emailExists) {
-        return Response.json({ 
-          error: 'Library owner account already exists with this email' 
-        }, { status: 409 })
-      }
-    }
 
     // Get free plan
     let freePlan = await prisma.subscriptionPlan.findFirst({
@@ -118,8 +91,35 @@ export async function POST(request: NextRequest) {
     const passwordHash = await hashPassword(password)
     const trialEnd = new Date(Date.now() + freePlan.trialDays * 24 * 60 * 60 * 1000)
 
-    // FIX 18: Create everything atomically in one transaction
-    const user = await prisma.user.create({
+    // P0-3: Use transaction to atomically consume OTP and create all records
+    // If user creation fails, OTP consumption is rolled back
+    const user = await prisma.$transaction(async (tx) => {
+      // P0-1: Check if token was already used (single-use enforcement)
+      const consumeResult = await consumeOtpVerification(tokenResult.otpRecordId!, tx)
+      if (!consumeResult.consumed) {
+        throw new Error(consumeResult.error || 'Failed to consume verification token')
+      }
+
+      // FIX 7: Check only for existing LIBRARY_OWNER account with this mobile
+      const existingOwner = await tx.user.findFirst({ 
+        where: { mobile, role: 'LIBRARY_OWNER' } 
+      })
+      if (existingOwner) {
+        throw new Error('Library owner account already exists with this mobile number')
+      }
+
+      // FIX 2: Check role-scoped email uniqueness
+      if (normalizedEmailValue) {
+        const emailExists = await tx.user.findFirst({ 
+          where: { email: normalizedEmailValue, role: 'LIBRARY_OWNER' } 
+        })
+        if (emailExists) {
+          throw new Error('Library owner account already exists with this email')
+        }
+      }
+
+      // FIX 18: Create everything atomically
+      return await tx.user.create({
       data: {
         mobile,
         name,
@@ -196,8 +196,9 @@ export async function POST(request: NextRequest) {
         },
       },
     })
+    }) // Close transaction
 
-    // If a valid referrer exists, create referral record
+    // If a valid referrer exists, create referral record (outside transaction)
     if (referrerOwner && usedReferralCode) {
       await prisma.ownerReferral.create({
         data: {
