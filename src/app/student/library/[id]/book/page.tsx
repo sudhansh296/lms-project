@@ -141,7 +141,11 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
       })
       const data = await orderRes.json()
       if (!orderRes.ok) {
-        toast.error(data.error ?? 'Payment setup failed')
+        if (data.error === 'OWNER_SETTLEMENT_NOT_ACTIVE') {
+          toast.error('Online payments are not available for this library yet. Please contact the library owner.')
+        } else {
+          toast.error(data.error ?? 'Payment setup failed')
+        }
         return
       }
 
@@ -228,7 +232,13 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
           setStep('done')
         },
         modal: {
-          ondismiss: () => {
+          ondismiss: async () => {
+            // Release the seat hold when checkout is dismissed
+            try {
+              await fetch(`/api/student/bookings/${orderData.bookingId}/cancel-pending`, {
+                method: 'POST',
+              })
+            } catch { /* non-critical */ }
             toast('Payment cancelled. Your seat reservation has been released.')
             setPaying(false)
           },
@@ -365,7 +375,7 @@ export default function BookSeatPage({ params }: { params: Promise<{ id: string 
               )}
               {bd.gstAmount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-slate-500">GST on Processing Fee (18%)</span>
+                  <span className="text-slate-500">GST on Processing Fee</span>
                   <span className="font-medium text-slate-900">{fmt(bd.gstAmount)}</span>
                 </div>
               )}

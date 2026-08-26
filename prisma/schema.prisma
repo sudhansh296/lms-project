@@ -138,9 +138,16 @@ model LibraryOwner {
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   libraries           Library[]
   subscription        OwnerSubscription?
-  // Razorpay linked account ID for receiving student payments
-  razorpayAccountId   String?  // e.g. "acc_XXXXXXXXXX" — set after owner onboards to Razorpay
-  razorpayAccountStatus String? @default("PENDING") // PENDING | ACTIVE | DISABLED
+  // Razorpay Route / settlement fields
+  razorpayAccountId        String?   // acc_XXXXXXXXXX — created by platform via Route API
+  razorpayAccountStatus    String?   @default("PENDING") // PENDING | UNDER_REVIEW | ACTION_REQUIRED | ACTIVE | SUSPENDED
+  razorpayStakeholderId    String?   // sth_XXXXXXXXXX
+  razorpayProductId        String?   // acc_prd_XXXXXXXXXX
+  razorpayActivationStatus String?   // created | under_review | needs_clarification | activated | suspended
+  settlementReady          Boolean   @default(false)
+  settlementRequirements   Json?     // raw requirements array from Razorpay
+  settlementActivatedAt    DateTime?
+  bankLast4                String?   // last 4 digits of bank account — safe to display
 
   // ── Referral / Membership ─────────────────────────────────────────────────
   referralCode        String?  @unique  // e.g. "STUDYLIB-A82K9" — auto-generated on registration
@@ -393,6 +400,7 @@ model Booking {
   totalAmount  Float
   bookingRef   String        @unique @default(cuid())
   notes        String?
+  holdExpiresAt DateTime?    // PENDING hold expires at this time; expired holds don't block seat
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
@@ -425,6 +433,12 @@ model Payment {
   processingFee       Float?        // Razorpay/payment processing fee charged to student
   gstAmount           Float?        // GST on processing fee charged to student
   baseAmount          Float?        // Base seat price before any fees
+
+  // Settlement / Route transfer tracking
+  settlementStatus    String?       @default("NOT_REQUIRED") // NOT_REQUIRED | PENDING | PROCESSING | PROCESSED | FAILED | RETRY_REQUIRED | REVERSED
+  transferFailureReason String?
+  transferAttempts    Int?          @default(0)
+  settledAt           DateTime?
 
   // Polymorphic: either booking or membership
   bookingId           String?       @unique

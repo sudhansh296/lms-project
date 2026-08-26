@@ -22,11 +22,11 @@ export async function GET(request: NextRequest) {
       await Promise.all([
         prisma.payment.aggregate({
           where: paymentWhere,
-          _sum: { amount: true },
+          _sum: { amount: true, platformFee: true, ownerAmount: true },
         }),
         prisma.payment.aggregate({
           where: { status: 'PAID', createdAt: { gte: startOfMonth(new Date()) } },
-          _sum: { amount: true },
+          _sum: { amount: true, platformFee: true },
         }),
         prisma.payment.aggregate({
           where: { status: 'PAID', createdAt: { gte: startOfYear(new Date()) } },
@@ -66,6 +66,13 @@ export async function GET(request: NextRequest) {
       _sum: { amount: true },
     })
 
+    // Settlement breakdown
+    const [settledCount, pendingSettlementCount, retryCount] = await Promise.all([
+      prisma.payment.count({ where: { ...paymentWhere, settlementStatus: 'PROCESSED' } }),
+      prisma.payment.count({ where: { ...paymentWhere, settlementStatus: 'PENDING' } }),
+      prisma.payment.count({ where: { ...paymentWhere, settlementStatus: 'RETRY_REQUIRED' } }),
+    ])
+
     return Response.json({
       total: totalRevenue._sum.amount ?? 0,
       monthly: monthlyRevenue._sum.amount ?? 0,
@@ -74,6 +81,16 @@ export async function GET(request: NextRequest) {
       membershipRevenue: membershipRevenue._sum.amount ?? 0,
       bookingRevenue: bookingRevenue._sum.amount ?? 0,
       monthlyBreakdown,
+      // Platform commission breakdown
+      totalPlatformFee: totalRevenue._sum.platformFee ?? 0,
+      totalOwnerSettled: totalRevenue._sum.ownerAmount ?? 0,
+      monthlyPlatformFee: monthlyRevenue._sum.platformFee ?? 0,
+      // Settlement health
+      settlement: {
+        settled: settledCount,
+        pending: pendingSettlementCount,
+        retryRequired: retryCount,
+      },
     })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'

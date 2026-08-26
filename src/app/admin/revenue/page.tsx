@@ -12,6 +12,10 @@ interface RevenueData {
   total: number; monthly: number; yearly: number; refunds: number
   membershipRevenue: number; bookingRevenue: number
   monthlyBreakdown: Array<{ label: string; amount: number }>
+  totalPlatformFee: number
+  totalOwnerSettled: number
+  monthlyPlatformFee: number
+  settlement: { settled: number; pending: number; retryRequired: number }
 }
 
 export default function AdminRevenuePage() {
@@ -75,6 +79,38 @@ export default function AdminRevenuePage() {
           <p className="text-2xl font-bold text-indigo-600">{formatCurrency(data?.yearly ?? 0)}</p>
         </Card>
       </div>
+
+      {/* Platform commission + settlement breakdown */}
+      <Card>
+        <CardHeader><CardTitle>Commission & Settlement Breakdown</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+            {[
+              { label: 'Platform Commission (total)', value: formatCurrency(data?.totalPlatformFee ?? 0), color: 'text-violet-700' },
+              { label: 'Owner Settlements (total)',    value: formatCurrency(data?.totalOwnerSettled ?? 0), color: 'text-emerald-700' },
+              { label: 'Platform Fee This Month',      value: formatCurrency(data?.monthlyPlatformFee ?? 0), color: 'text-indigo-700' },
+            ].map(r => (
+              <div key={r.label} className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                <p className="text-xs text-slate-500 mb-1">{r.label}</p>
+                <p className={`text-lg font-bold ${r.color}`}>{r.value}</p>
+              </div>
+            ))}
+          </div>
+          {data?.settlement && (
+            <div className="mt-4 flex flex-wrap gap-3 text-xs">
+              {[
+                { label: 'Settled',        val: data.settlement.settled,        cls: 'bg-emerald-100 text-emerald-700' },
+                { label: 'Pending',        val: data.settlement.pending,        cls: 'bg-amber-100 text-amber-700' },
+                { label: 'Retry Required', val: data.settlement.retryRequired,  cls: 'bg-red-100 text-red-700' },
+              ].map(s => (
+                <span key={s.label} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold ${s.cls}`}>
+                  {s.label}: {s.val}
+                </span>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Chart */}
       <Card>
