@@ -111,7 +111,7 @@ export async function PATCH(
         }
       }
 
-      // P0-9 FIX: When account ID changes, reset all onboarding state
+      // P0-9 FIX: When account ID changes OR is removed, reset all onboarding state
       // Get current account ID to detect changes
       const currentOwner = await prisma.libraryOwner.findUnique({
         where: { id: library.ownerId },
@@ -119,18 +119,22 @@ export async function PATCH(
       })
 
       const isAccountChanging = currentOwner?.razorpayAccountId !== razorpayAccountId
+      const isAccountRemoved = !razorpayAccountId && !!currentOwner?.razorpayAccountId
 
       await prisma.libraryOwner.update({
         where: { id: library.ownerId },
         data: {
           razorpayAccountId: razorpayAccountId || null,
           razorpayAccountStatus: razorpayAccountId ? 'ACTIVE' : 'PENDING',
-          // P0-9: Reset onboarding state when account changes
-          ...(isAccountChanging && razorpayAccountId ? {
+          // P0-9: Reset ALL onboarding state when account changes or removed
+          ...(isAccountChanging || isAccountRemoved ? {
             settlementReady: false,
             razorpayProductId: null,
             razorpayStakeholderId: null,
-            razorpayActivationStatus: 'IN_PROGRESS',
+            razorpayActivationStatus: null,
+            settlementRequirements: null,
+            settlementActivatedAt: null,
+            bankLast4: null,
           } : {}),
         },
       })

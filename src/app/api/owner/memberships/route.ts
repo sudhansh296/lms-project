@@ -48,20 +48,32 @@ export async function POST(request: NextRequest) {
     // Auto-generate name if not provided (for MONTHLY_RATE plans)
     const planName = d.name?.trim() || (isMonthlyRate ? generatePlanName(d.dailyMinutes) : 'Unnamed Plan')
 
-    // Check for duplicate monthly rate plan (library + dailyMinutes must be unique for MONTHLY_RATE)
+    // P1-5 FIX: Check for duplicate monthly rate plan
+    // If exists and active → error "edit existing"
+    // If exists but inactive → suggest reactivate via PATCH
     if (isMonthlyRate) {
       const existing = await prisma.membershipPlan.findFirst({
         where: {
           libraryId: library.id,
           dailyMinutes: d.dailyMinutes,
           pricingModel: 'MONTHLY_RATE',
-          isActive: true,
         },
+        select: { id: true, isActive: true },
       })
+      
       if (existing) {
-        return Response.json({
-          error: `A monthly rate for ${generatePlanName(d.dailyMinutes)} already exists. Please edit the existing plan or deactivate it first.`,
-        }, { status: 409 })
+        if (existing.isActive) {
+          return Response.json({
+            error: `A monthly rate for ${generatePlanName(d.dailyMinutes)} already exists. Please edit it instead.`,
+            existingPlanId: existing.id,
+          }, { status: 409 })
+        } else {
+          return Response.json({
+            error: `A deactivated monthly rate for ${generatePlanName(d.dailyMinutes)} exists. Please reactivate it via PATCH /api/owner/memberships/${existing.id} instead of creating a new one.`,
+            existingPlanId: existing.id,
+            suggestion: 'REACTIVATE',
+          }, { status: 409 })
+        }
       }
     }
 
