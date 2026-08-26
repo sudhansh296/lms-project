@@ -3,9 +3,12 @@ import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
 import type { Role } from '@/generated/prisma/client'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.NEXTAUTH_SECRET ?? 'fallback-secret-please-set-env'
-)
+// FIX 20: No fallback - fail loudly if JWT_SECRET is missing
+const JWT_SECRET_ENV = process.env.NEXTAUTH_SECRET
+if (!JWT_SECRET_ENV || JWT_SECRET_ENV === 'fallback-secret-please-set-env') {
+  throw new Error('NEXTAUTH_SECRET environment variable must be set to a strong secret value')
+}
+const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_ENV)
 
 export interface SessionUser {
   id: string

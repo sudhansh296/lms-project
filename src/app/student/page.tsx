@@ -90,11 +90,13 @@ export default function StudentDashboard() {
         </div>
       </Link>
 
-      {/* Active Memberships */}
+      {/* Active Memberships - LEGACY DATA ONLY (for reference) */}
+      {/* FIX 16, 17: Memberships are DEPRECATED. Access is booking-driven. */}
+      {/* This section shows legacy membership records only - they do NOT grant library access. */}
       {(data?.activeMemberships.length ?? 0) > 0 && (
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-slate-900">Active Memberships</h2>
+            <h2 className="font-bold text-slate-900">Legacy Memberships</h2>
             <Link href="/student/expiry" className="text-xs text-indigo-600 font-medium">View expiry</Link>
           </div>
           <div className="space-y-2">
@@ -107,7 +109,7 @@ export default function StudentDashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm text-slate-900 truncate">{m.library.name}</p>
-                    <p className="text-xs text-slate-500">{m.plan.name}</p>
+                    <p className="text-xs text-slate-500">{m.plan.name} (legacy)</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className={`text-xs font-bold ${expiry.urgent ? 'text-red-500' : 'text-slate-500'}`}>
@@ -149,12 +151,12 @@ export default function StudentDashboard() {
         </section>
       )}
 
-      {/* No memberships CTA */}
+      {/* No bookings CTA */}
       {(data?.activeMemberships.length ?? 0) === 0 && (data?.upcomingBookings.length ?? 0) === 0 && (
         <div className="rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center">
           <BookOpen className="h-10 w-10 mx-auto text-slate-300 mb-3" />
           <p className="font-semibold text-slate-700">Start your study journey</p>
-          <p className="text-sm text-slate-400 mt-1 mb-4">Find a library near you and book a seat — your membership is activated automatically.</p>
+          <p className="text-sm text-slate-400 mt-1 mb-4">Find a library near you and book a seat to get started.</p>
           <Link href="/student/explore">
             <button className="rounded-xl bg-indigo-600 text-white px-6 py-2.5 text-sm font-medium hover:bg-indigo-700 transition-colors">
               Explore Libraries

@@ -70,10 +70,17 @@ export async function POST(request: NextRequest) {
     let effectiveDurationUnit = plan.durationUnit as 'DAY'|'WEEK'|'MONTH'|'YEAR'
     
     if (isMonthlyRate) {
-      if (!months || typeof months !== 'number' || months < 1 || months > 24) {
-        return Response.json({ error: 'For monthly rate plans, months parameter is required (1-24)' }, { status: 400 })
+      // FIX 22: Validate months is an integer (not float/string)
+      if (!months || typeof months !== 'number') {
+        return Response.json({ error: 'For monthly rate plans, months parameter is required and must be a number' }, { status: 400 })
       }
-      selectedMonths = Math.floor(months)
+      if (!Number.isInteger(months)) {
+        return Response.json({ error: 'Months must be a whole number (no decimals)' }, { status: 400 })
+      }
+      if (months < 1 || months > 24) {
+        return Response.json({ error: 'Months must be between 1 and 24' }, { status: 400 })
+      }
+      selectedMonths = months // Already validated as integer
       effectiveDurationValue = selectedMonths
       effectiveDurationUnit = 'MONTH'
     }
@@ -112,15 +119,16 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Start date cannot be in the past' }, { status: 400 })
     }
 
+    // FIX 8: endDate is stored as EXCLUSIVE boundary (e.g., 1 month from Sep 1 = Oct 1)
+    // lastDay (for occurrence generation) = endDate - 1 day
     const endDate = calcPlanEndDate(parsedStart, effectiveDurationValue, effectiveDurationUnit)
-    // endDate is exclusive (e.g. 1 month from Sep 1 = Oct 1), subtract 1 day for last occurrence
     const lastDay = new Date(endDate)
-    lastDay.setUTCDate(lastDay.getUTCDate() - 1)
+    lastDay.setUTCDate(lastDay.getUTCDate() - 1) // Last day to generate occurrences
 
     // ── 7. Generate occurrences ───────────────────────────────────────────────
     const occurrences = generateOccurrences(
       parsedStart,
-      lastDay,
+      lastDay, // Generate through last included day
       resolvedDailyStart,
       plan.dailyMinutes,
       plan.allowedDays
@@ -153,13 +161,17 @@ export async function POST(request: NextRequest) {
     // ── 10. Check seat availability for ALL occurrences ───────────────────────
     // Only active holds and confirmed/active bookings conflict.
     const now = new Date()
+    const requestedRangeStart = occurrences[0].startTime
+    const requestedRangeEnd = occurrences[occurrences.length - 1].endTime
+    
+    // Proper interval overlap: existing interval overlaps if:
+    // existingStart < requestedEnd AND existingEnd > requestedStart
     const existingOccurrences = await prisma.bookingOccurrence.findMany({
       where: {
         seatId,
         status: { in: ['HELD', 'CONFIRMED'] },
-        // At least one occurrence overlaps our slot on ANY day in the range
-        startTime: { gte: occurrences[0].startTime },
-        endTime:   { lte: occurrences[occurrences.length - 1].endTime },
+        startTime: { lt: requestedRangeEnd },
+        endTime: { gt: requestedRangeStart },
       },
       select: { startTime: true, endTime: true, bookingId: true },
     })
@@ -208,6 +220,13 @@ export async function POST(request: NextRequest) {
     })
     const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000)
 
+    // FIX 23: Explicit willCharge validation - ensure consistency
+    const willChargeAmount = breakdown.totalAmount > 0 || breakdown.studentTotal > 0
+    if (willCharge !== willChargeAmount) {
+      console.error(`[SECURITY] willCharge mismatch: flag=${willCharge}, amount=${willChargeAmount}, breakdown=${JSON.stringify(breakdown)}`)
+      return Response.json({ error: 'Payment calculation error. Please try again.' }, { status: 500 })
+    }
+
     // ── 12. Snapshots (immutable record of what was purchased) ────────────────
     const durationSnapshot = isMonthlyRate 
       ? `${selectedMonths} MONTH`
@@ -224,7 +243,7 @@ export async function POST(request: NextRequest) {
         data: {
           libraryId, studentId: session.id, seatId,
           planId,
-          startDate: parsedStart, endDate: lastDay,
+          startDate: parsedStart, endDate: endDate, // FIX 8: Store exclusive boundary
           dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
           planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
           dailyMinutesSnapshot, durationSnapshot,
@@ -267,7 +286,7 @@ export async function POST(request: NextRequest) {
           name: planNameSnapshot, 
           dailyMinutes: plan.dailyMinutes, 
           startDate: parsedStart, 
-          endDate: lastDay, 
+          endDate: endDate, // FIX 8: Use exclusive boundary in response
           dailyStartTime: resolvedDailyStart, 
           dailyEndTime: resolvedDailyEnd,
           durationValue: effectiveDurationValue,
@@ -282,7 +301,7 @@ export async function POST(request: NextRequest) {
       data: {
         libraryId, studentId: session.id, seatId,
         planId,
-        startDate: parsedStart, endDate: lastDay,
+        startDate: parsedStart, endDate: endDate, // FIX 8: Store exclusive boundary
         dailyStartTime: resolvedDailyStart, dailyEndTime: resolvedDailyEnd,
         planNameSnapshot, planPriceSnapshot, seatExtraSnapshot,
         dailyMinutesSnapshot, durationSnapshot,
@@ -360,7 +379,7 @@ export async function POST(request: NextRequest) {
         name: planNameSnapshot,
         dailyMinutes: plan.dailyMinutes,
         startDate: parsedStart.toISOString().slice(0,10),
-        endDate:   lastDay.toISOString().slice(0,10),
+        endDate:   endDate.toISOString().slice(0,10), // FIX 8: Use exclusive boundary
         dailyStartTime: resolvedDailyStart,
         dailyEndTime:   resolvedDailyEnd,
         durationValue: effectiveDurationValue,

@@ -197,13 +197,21 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
   const fetchSeats = async () => {
     if (!selectedPlan) return
     setLoadingSeats(true); setSelectedSeat(null)
-    // Use first occurrence date+time to check availability for display
-    const slotStart = new Date(`${startDate}T${resolvedDailyStart}:00`)
-    const slotEnd   = new Date(slotStart.getTime() + selectedPlan.dailyMinutes * 60000)
+    
+    // FIX 7: Check availability for the FULL PERIOD, not just first occurrence
+    // Calculate the actual first and last occurrence time
+    const firstOccurrenceStart = new Date(`${startDate}T${resolvedDailyStart}:00`)
+    const firstOccurrenceEnd = new Date(firstOccurrenceStart.getTime() + selectedPlan.dailyMinutes * 60000)
+    
+    // Calculate the last occurrence (same daily time but on the last date)
+    const lastDate = endDate ? format(addDays(endDate, -1), 'yyyy-MM-dd') : startDate
+    const lastOccurrenceStart = new Date(`${lastDate}T${resolvedDailyStart}:00`)
+    const lastOccurrenceEnd = new Date(lastOccurrenceStart.getTime() + selectedPlan.dailyMinutes * 60000)
+    
     const q = new URLSearchParams({
       date: startDate,
-      startTime: slotStart.toISOString(),
-      endTime: slotEnd.toISOString(),
+      startTime: firstOccurrenceStart.toISOString(),
+      endTime: lastOccurrenceEnd.toISOString(), // Now checking FULL period
     })
     const res = await fetch(`/api/libraries/${libraryId}/seats?${q}`)
     const data = await res.json()
@@ -402,21 +410,18 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
               {bd.libraryBaseAmount !== undefined ? (
                 <>
                   <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Library Base Amount</span><span className="font-medium">{fmt(bd.libraryBaseAmount)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Platform Commission (5%)</span><span className="font-medium text-slate-400">-{fmt(bd.platformCommission ?? 0)} (from owner)</span></div>
                   {bd.gatewayFee && bd.gatewayFee > 0 && (
-                    <>
-                      <div className="flex justify-between"><span className="text-slate-500">Gateway Fee</span><span className="font-medium">{fmt(bd.gatewayFee)}</span></div>
-                      {bd.gatewayFeeGst && bd.gatewayFeeGst > 0 && (
-                        <div className="flex justify-between"><span className="text-slate-500">Gateway GST</span><span className="font-medium">{fmt(bd.gatewayFeeGst)}</span></div>
-                      )}
-                    </>
+                    <div className="flex justify-between"><span className="text-slate-500">Platform Fee (incl. GST)</span><span className="font-medium">{fmt((bd.gatewayFee ?? 0) + (bd.gatewayFeeGst ?? 0))}</span></div>
                   )}
                 </>
               ) : (
                 <>
+                  {/* FIX 18: Don't show platformCommission (5%) to students - that's between platform and owner */}
                   <div className="flex justify-between border-t border-slate-50 pt-2"><span className="text-slate-500">Library Amount</span><span className="font-medium">{fmt(bd.baseAmount)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Platform / Service Fee (5%)</span><span className="font-medium">{fmt(bd.platformFee ?? 0)}</span></div>
-                  {bd.processingFee && bd.processingFee > 0 && <div className="flex justify-between"><span className="text-slate-500">Processing Fee</span><span className="font-medium">{fmt(bd.processingFee)}</span></div>}
+                  {bd.gatewayFee && bd.gatewayFee > 0 && (
+                    <div className="flex justify-between"><span className="text-slate-500">Platform Fee (incl. GST)</span><span className="font-medium">{fmt((bd.gatewayFee ?? 0) + (bd.gatewayFeeGst ?? 0))}</span></div>
+                  )}
+                  {bd.processingFee && bd.processingFee > 0 && !bd.gatewayFee && <div className="flex justify-between"><span className="text-slate-500">Processing Fee</span><span className="font-medium">{fmt(bd.processingFee)}</span></div>}
                 </>
               )}
               

@@ -260,6 +260,9 @@ export type LegacyPackagePlanInput = z.infer<typeof legacyPackagePlanSchema>
 /**
  * Calculate the end date of a plan given a start date, durationValue and durationUnit.
  * Uses calendar arithmetic for MONTH/YEAR so durations are exact.
+ * 
+ * Returns an EXCLUSIVE end date boundary.
+ * Example: 1 month from Sep 1 → Oct 1 (last included day is Sep 30)
  */
 export function calcPlanEndDate(
   startDate: Date,

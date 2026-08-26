@@ -13,11 +13,54 @@ export async function DELETE(
     const booking = await prisma.booking.findFirst({ where: { id, studentId: session.id } })
     if (!booking) return Response.json({ error: 'Booking not found' }, { status: 404 })
 
-    if (!['CONFIRMED', 'PENDING'].includes(booking.status)) {
-      return Response.json({ error: 'Cannot cancel this booking' }, { status: 400 })
+    // CONFIRMED bookings are FINAL - no cancellation allowed
+    if (booking.status === 'CONFIRMED') {
+      return Response.json({
+        error: 'CONFIRMED_BOOKING_CANNOT_BE_CANCELLED',
+        message: 'Completed payments and confirmed bookings are final. No refunds available.',
+      }, { status: 409 })
     }
 
-    await prisma.booking.update({ where: { id }, data: { status: 'CANCELLED' } })
+    // ACTIVE bookings are also final
+    if (booking.status === 'ACTIVE') {
+      return Response.json({
+        error: 'ACTIVE_BOOKING_CANNOT_BE_CANCELLED',
+        message: 'Active bookings cannot be cancelled.',
+      }, { status: 409 })
+    }
+
+    // COMPLETED bookings cannot be changed
+    if (booking.status === 'COMPLETED') {
+      return Response.json({
+        error: 'COMPLETED_BOOKING_CANNOT_BE_CANCELLED',
+        message: 'Completed bookings cannot be cancelled.',
+      }, { status: 409 })
+    }
+
+    // Only PENDING bookings may be cancelled
+    if (booking.status !== 'PENDING') {
+      return Response.json({ 
+        error: `Cannot cancel booking with status: ${booking.status}`,
+        message: 'Only pending bookings can be cancelled.',
+      }, { status: 400 })
+    }
+
+    // Cancel PENDING booking and release occurrences
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { status: 'CANCELLED' } })
+      
+      // Release all HELD occurrences for this booking
+      await tx.bookingOccurrence.updateMany({
+        where: { bookingId: id, status: 'HELD' },
+        data: { status: 'CANCELLED' },
+      })
+      
+      // Mark associated PENDING payment as FAILED if it exists
+      await tx.payment.updateMany({
+        where: { bookingId: id, status: 'PENDING' },
+        data: { status: 'FAILED', settlementStatus: 'NOT_REQUIRED' },
+      })
+    })
 
     await createAuditLog({
       userId: session.userId,

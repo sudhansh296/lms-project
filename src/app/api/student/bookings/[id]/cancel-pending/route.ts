@@ -43,6 +43,13 @@ export async function POST(_req: NextRequest, context: RouteContext) {
         where: { id: bookingId },
         data: { status: 'CANCELLED' },
       })
+      
+      // Release all HELD occurrences for this booking
+      await tx.bookingOccurrence.updateMany({
+        where: { bookingId, status: 'HELD' },
+        data: { status: 'CANCELLED' },
+      })
+      
       // Mark associated PENDING payment as FAILED if it exists
       await tx.payment.updateMany({
         where: { bookingId, status: 'PENDING' },

@@ -70,7 +70,7 @@ export async function GET() {
         where: {
           libraryId: libId,
           status: 'ACTIVE',
-          endDate: { gte: new Date(), lte: in5Days },
+          endDate: { gte: new Date(), lt: in5Days }, // FIX 9: endDate is exclusive, use lt
         },
       }),
     ])

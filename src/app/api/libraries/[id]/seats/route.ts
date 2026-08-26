@@ -29,12 +29,14 @@ export async function GET(
       const end   = new Date(endTime)
       const now   = new Date()
 
-      // Check conflicts via BookingOccurrences (new recurring system)
-      // AND legacy single-booking conflicts for backward compat
+      // FIX 6: Check full-period availability for recurring bookings
+      // The frontend should pass the FULL range: first occurrence start → last occurrence end
+      // We check if ANY occurrence in that range conflicts with the seat
       const [conflictingOccurrences, legacyConflicts] = await Promise.all([
         prisma.bookingOccurrence.findMany({
           where: {
             status: { in: ['HELD', 'CONFIRMED'] },
+            // Proper interval overlap: existing overlaps if startTime < end AND endTime > start
             startTime: { lt: end },
             endTime:   { gt: start },
           },

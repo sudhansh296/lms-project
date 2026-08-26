@@ -137,79 +137,20 @@ export async function finalizeCapturedBookingPayment(params: {
   // ── 5. Get breakdown from PENDING payment record ──────────────────────────
   // CRITICAL: Use stored breakdown from Payment record created at order time.
   // NEVER recalculate using current plan prices - use snapshot values.
+  // FIX 10: If no PENDING payment exists, reject (don't reconstruct)
   const pendingPayment = await prisma.payment.findFirst({ where: { bookingId, status: 'PENDING' } })
   
   if (!pendingPayment) {
-    // Fallback: if no PENDING payment exists (shouldn't happen), reconstruct from booking snapshots
-    const planPrice = booking.planPriceSnapshot ?? booking.totalAmount
-    const seatExtra = booking.seatExtraSnapshot ?? 0
-    const months = booking.selectedMonths ?? 1
-    const monthlyPrice = booking.monthlyPriceSnapshot ?? planPrice
-    
-    const breakdown = calculatePaymentBreakdown(planPrice, seatExtra, { months, monthlyPrice })
-    
-    // Create payment row
-    await prisma.$transaction(async (tx) => {
-      await tx.payment.create({
-        data: {
-          studentId,
-          bookingId,
-          amount: breakdown.studentTotal ?? breakdown.totalAmount,
-          status: 'PAID',
-          paymentMethod: 'RAZORPAY',
-          paymentType: 'SEAT_BOOKING',
-          gatewayOrderId: razorpayOrderId,
-          gatewayPaymentId: razorpayPaymentId,
-          gatewaySignature: razorpaySignature,
-          planPrice: breakdown.planPrice,
-          monthlyPrice: breakdown.monthlyPrice,
-          selectedMonths: months > 1 ? months : null,
-          seatExtraAmount: breakdown.seatExtraAmount,
-          baseAmount: breakdown.libraryBaseAmount ?? breakdown.baseAmount,
-          platformFee: breakdown.platformCommission ?? breakdown.platformFee,
-          processingFee: 0, 
-          gstAmount: 0,
-          gatewayFee: breakdown.gatewayFee ?? 0,
-          gatewayFeeGst: breakdown.gatewayFeeGst ?? 0,
-          ownerAmount: breakdown.ownerAmount,
-          settlementStatus: 'PENDING',
-          transferAttempts: 0,
-        },
-      })
-      await tx.booking.update({ where: { id: bookingId }, data: { status: 'CONFIRMED' } })
-      await tx.bookingOccurrence.updateMany({ where: { bookingId, status: 'HELD' }, data: { status: 'CONFIRMED' } })
-    })
-    
-    // Attempt Route transfer
-    const transferResult = await attemptOwnerSettlement({
-      bookingId,
-      razorpayPaymentId,
-      ownerAccountId: booking.library.owner.razorpayAccountId,
-      ownerAmountPaise: toPaise(breakdown.ownerAmount),
-      meta: { bookingId, libraryId: booking.libraryId, seatLabel: booking.seat.label },
-    })
-    
-    // Notify owner
-    try {
-      await prisma.notification.create({
-        data: {
-          userId: booking.library.owner.userId,
-          libraryId: booking.libraryId,
-          type: 'PAYMENT_RECEIVED',
-          title: 'Booking Payment Received',
-          message: `₹${(breakdown.studentTotal ?? breakdown.totalAmount).toFixed(2)} received for seat ${booking.seat.label} (your share: ₹${breakdown.ownerAmount.toFixed(2)})`,
-          data: { 
-            bookingId, 
-            totalAmount: breakdown.studentTotal ?? breakdown.totalAmount, 
-            ownerAmount: breakdown.ownerAmount, 
-            platformFee: breakdown.platformCommission ?? breakdown.platformFee, 
-            transferId: transferResult.transferId 
-          },
-        },
-      })
-    } catch { /* non-critical */ }
-    
-    return { success: true, breakdown, transferId: transferResult.transferId }
+    console.error(`[SECURITY] No PENDING payment found for booking ${bookingId}. Rejecting.`)
+    await prisma.booking.update({ where: { id: bookingId }, data: { status: 'CANCELLED' } })
+    await prisma.bookingOccurrence.updateMany({ where: { bookingId }, data: { status: 'CANCELLED' } })
+    try { 
+      await refundPayment(razorpayPaymentId, rzpPayment.amount, { 
+        reason: 'Invalid payment state - no pending payment record', 
+        bookingId 
+      }) 
+    } catch { /* log */ }
+    return { success: false, error: 'Payment record not found - booking cancelled and refund initiated' }
   }
   
   // Use stored breakdown from PENDING payment (correct approach)
@@ -289,34 +230,74 @@ export async function attemptOwnerSettlement(params: {
   meta: Record<string, string>
 }): Promise<{ transferId: string | null }> {
   const { bookingId, razorpayPaymentId, ownerAccountId, ownerAmountPaise, meta } = params
-  const payment = await prisma.payment.findFirst({ where: { bookingId } })
-  if (!payment) return { transferId: null }
+  
+  // FIX 13: Atomic claim - use transaction to prevent concurrent processing
+  const claimed = await prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findFirst({ 
+      where: { bookingId },
+      select: { id: true, settlementStatus: true, gatewayTransferId: true }
+    })
+    if (!payment) return null
 
-  if (payment.settlementStatus === 'PROCESSED' && payment.gatewayTransferId) {
-    return { transferId: payment.gatewayTransferId }
-  }
+    // Already processed
+    if (payment.settlementStatus === 'PROCESSED' && payment.gatewayTransferId) {
+      return { alreadyProcessed: true, transferId: payment.gatewayTransferId }
+    }
 
+    // Already being processed
+    if (payment.settlementStatus === 'PROCESSING') {
+      return { alreadyProcessed: true, transferId: null }
+    }
+
+    // FIX 14: Set to PROCESSING state atomically to claim this settlement
+    const updated = await tx.payment.updateMany({
+      where: { 
+        id: payment.id,
+        settlementStatus: { in: ['PENDING', 'RETRY_REQUIRED'] } // Only claim if not already claimed
+      },
+      data: { settlementStatus: 'PROCESSING', transferAttempts: { increment: 1 } }
+    })
+
+    if (updated.count === 0) {
+      // Another process claimed it
+      return { alreadyProcessed: true, transferId: null }
+    }
+
+    return { claimed: true, paymentId: payment.id }
+  })
+
+  if (!claimed) return { transferId: null }
+  if ('alreadyProcessed' in claimed) return { transferId: claimed.transferId ?? null }
+  
+  const paymentId = claimed.paymentId
+
+  // Validation checks
   if (!ownerAccountId || ownerAmountPaise <= 0) {
     const reason = !ownerAccountId ? 'Owner has no Razorpay linked account' : 'Owner amount is zero'
     await prisma.payment.update({
-      where: { id: payment.id },
-      data: { settlementStatus: 'RETRY_REQUIRED', transferFailureReason: reason, transferAttempts: { increment: 1 } },
+      where: { id: paymentId },
+      data: { settlementStatus: 'RETRY_REQUIRED', transferFailureReason: reason },
     })
     return { transferId: null }
   }
 
+  // Attempt transfer
   try {
     const transfer = await transferPaymentToOwner(razorpayPaymentId, ownerAccountId, ownerAmountPaise, meta)
     await prisma.payment.update({
-      where: { id: payment.id },
-      data: { gatewayTransferId: transfer.id, settlementStatus: 'PROCESSED', settledAt: new Date(), transferAttempts: { increment: 1 } },
+      where: { id: paymentId },
+      data: { 
+        gatewayTransferId: transfer.id, 
+        settlementStatus: 'PROCESSED', 
+        settledAt: new Date(),
+      },
     })
     return { transferId: transfer.id }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     await prisma.payment.update({
-      where: { id: payment.id },
-      data: { settlementStatus: 'RETRY_REQUIRED', transferFailureReason: reason, transferAttempts: { increment: 1 } },
+      where: { id: paymentId },
+      data: { settlementStatus: 'RETRY_REQUIRED', transferFailureReason: reason },
     })
     return { transferId: null }
   }
@@ -346,9 +327,27 @@ export async function cancelExpiredBookingHolds(): Promise<number> {
   if (expired.length === 0) return 0
 
   const ids = expired.map(b => b.id)
-  await prisma.bookingOccurrence.updateMany({ where: { bookingId: { in: ids }, status: 'HELD' }, data: { status: 'EXPIRED' } })
-  await prisma.booking.updateMany({ where: { id: { in: ids } }, data: { status: 'CANCELLED' } })
-  await prisma.payment.updateMany({ where: { bookingId: { in: ids }, status: 'PENDING' }, data: { status: 'FAILED', settlementStatus: 'NOT_REQUIRED' } })
+  
+  // Release all resources in a transaction
+  await prisma.$transaction(async (tx) => {
+    // Set occurrences to CANCELLED (not EXPIRED) so they don't block seats
+    await tx.bookingOccurrence.updateMany({
+      where: { bookingId: { in: ids }, status: 'HELD' },
+      data: { status: 'CANCELLED' },
+    })
+    
+    // Mark bookings as CANCELLED
+    await tx.booking.updateMany({
+      where: { id: { in: ids } },
+      data: { status: 'CANCELLED' },
+    })
+    
+    // Mark payments as FAILED
+    await tx.payment.updateMany({
+      where: { bookingId: { in: ids }, status: 'PENDING' },
+      data: { status: 'FAILED', settlementStatus: 'NOT_REQUIRED' },
+    })
+  })
 
   return expired.length
 }
