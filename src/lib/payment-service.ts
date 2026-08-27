@@ -33,23 +33,23 @@ export async function finalizeCapturedBookingPayment(params: {
   if (existingPayment) {
     // Use stored breakdown from Payment record (never recalculate)
     const bd = {
-      planPrice: existingPayment.planPrice ?? 0,
+      planPrice: Number(existingPayment.planPrice ?? 0),
       months: existingPayment.selectedMonths ?? 1,
-      monthlyPrice: existingPayment.monthlyPrice ?? existingPayment.planPrice ?? 0,
-      seatExtraAmount: existingPayment.seatExtraAmount ?? 0,
-      libraryBaseAmount: existingPayment.baseAmount ?? 0,
-      platformCommission: existingPayment.platformFee ?? 0,
-      ownerAmount: existingPayment.ownerAmount ?? 0,
-      gatewayFee: existingPayment.gatewayFee ?? 0,
-      gatewayFeeGst: existingPayment.gatewayFeeGst ?? 0,
-      studentTotal: existingPayment.amount ?? 0,
-      baseAmount: existingPayment.baseAmount ?? 0,
-      platformFee: existingPayment.platformFee ?? 0,
-      processingFee: existingPayment.gatewayFee ?? 0,
-      gstAmount: existingPayment.gatewayFeeGst ?? 0,
-      totalAmount: existingPayment.amount ?? 0,
+      monthlyPrice: Number(existingPayment.monthlyPrice ?? existingPayment.planPrice ?? 0),
+      seatExtraAmount: Number(existingPayment.seatExtraAmount ?? 0),
+      libraryBaseAmount: Number(existingPayment.baseAmount ?? 0),
+      platformCommission: Number(existingPayment.platformFee ?? 0),
+      ownerAmount: Number(existingPayment.ownerAmount ?? 0),
+      gatewayFee: Number(existingPayment.gatewayFee ?? 0),
+      gatewayFeeGst: Number(existingPayment.gatewayFeeGst ?? 0),
+      studentTotal: Number(existingPayment.amount ?? 0),
+      baseAmount: Number(existingPayment.baseAmount ?? 0),
+      platformFee: Number(existingPayment.platformFee ?? 0),
+      processingFee: Number(existingPayment.gatewayFee ?? 0),
+      gstAmount: Number(existingPayment.gatewayFeeGst ?? 0),
+      totalAmount: Number(existingPayment.amount ?? 0),
     }
-    return { success: true, alreadyProcessed: true, breakdown: bd as any, transferId: existingPayment.gatewayTransferId ?? null }
+    return { success: true, alreadyProcessed: true, breakdown: bd as ReturnType<typeof calculatePaymentBreakdown>, transferId: existingPayment.gatewayTransferId ?? null }
   }
 
   // ── 2. Fetch and verify from Razorpay ──────────────────────────────────────
@@ -84,22 +84,22 @@ export async function finalizeCapturedBookingPayment(params: {
     const ep = await prisma.payment.findFirst({ where: { bookingId } })
     // Use stored breakdown from Payment record (never recalculate)
     const bd = ep ? {
-      planPrice: ep.planPrice ?? 0,
+      planPrice: Number(ep.planPrice ?? 0),
       months: ep.selectedMonths ?? 1,
-      monthlyPrice: ep.monthlyPrice ?? ep.planPrice ?? 0,
-      seatExtraAmount: ep.seatExtraAmount ?? 0,
-      libraryBaseAmount: ep.baseAmount ?? 0,
-      platformCommission: ep.platformFee ?? 0,
-      ownerAmount: ep.ownerAmount ?? 0,
-      gatewayFee: ep.gatewayFee ?? 0,
-      gatewayFeeGst: ep.gatewayFeeGst ?? 0,
-      studentTotal: ep.amount ?? 0,
-      baseAmount: ep.baseAmount ?? 0,
-      platformFee: ep.platformFee ?? 0,
-      processingFee: ep.gatewayFee ?? 0,
-      gstAmount: ep.gatewayFeeGst ?? 0,
-      totalAmount: ep.amount ?? 0,
-    } as any : undefined
+      monthlyPrice: Number(ep.monthlyPrice ?? ep.planPrice ?? 0),
+      seatExtraAmount: Number(ep.seatExtraAmount ?? 0),
+      libraryBaseAmount: Number(ep.baseAmount ?? 0),
+      platformCommission: Number(ep.platformFee ?? 0),
+      ownerAmount: Number(ep.ownerAmount ?? 0),
+      gatewayFee: Number(ep.gatewayFee ?? 0),
+      gatewayFeeGst: Number(ep.gatewayFeeGst ?? 0),
+      studentTotal: Number(ep.amount ?? 0),
+      baseAmount: Number(ep.baseAmount ?? 0),
+      platformFee: Number(ep.platformFee ?? 0),
+      processingFee: Number(ep.gatewayFee ?? 0),
+      gstAmount: Number(ep.gatewayFeeGst ?? 0),
+      totalAmount: Number(ep.amount ?? 0),
+    } as ReturnType<typeof calculatePaymentBreakdown> : undefined
     return { success: true, alreadyProcessed: true, breakdown: bd, transferId: ep?.gatewayTransferId ?? null }
   }
 
@@ -156,21 +156,21 @@ export async function finalizeCapturedBookingPayment(params: {
   
   // Use stored breakdown from PENDING payment (correct approach)
   const breakdown = {
-    planPrice: pendingPayment.planPrice ?? 0,
+    planPrice: Number(pendingPayment.planPrice ?? 0),
     months: pendingPayment.selectedMonths ?? 1,
-    monthlyPrice: pendingPayment.monthlyPrice ?? pendingPayment.planPrice ?? 0,
-    seatExtraAmount: pendingPayment.seatExtraAmount ?? 0,
-    libraryBaseAmount: pendingPayment.baseAmount ?? 0,
-    platformCommission: pendingPayment.platformFee ?? 0,
-    ownerAmount: pendingPayment.ownerAmount ?? 0,
-    gatewayFee: pendingPayment.gatewayFee ?? 0,
-    gatewayFeeGst: pendingPayment.gatewayFeeGst ?? 0,
-    studentTotal: pendingPayment.amount ?? 0,
-    baseAmount: pendingPayment.baseAmount ?? 0,
-    platformFee: pendingPayment.platformFee ?? 0,
-    processingFee: pendingPayment.gatewayFee ?? 0,
-    gstAmount: pendingPayment.gatewayFeeGst ?? 0,
-    totalAmount: pendingPayment.amount ?? 0,
+    monthlyPrice: Number(pendingPayment.monthlyPrice ?? pendingPayment.planPrice ?? 0),
+    seatExtraAmount: Number(pendingPayment.seatExtraAmount ?? 0),
+    libraryBaseAmount: Number(pendingPayment.baseAmount ?? 0),
+    platformCommission: Number(pendingPayment.platformFee ?? 0),
+    ownerAmount: Number(pendingPayment.ownerAmount ?? 0),
+    gatewayFee: Number(pendingPayment.gatewayFee ?? 0),
+    gatewayFeeGst: Number(pendingPayment.gatewayFeeGst ?? 0),
+    studentTotal: Number(pendingPayment.amount ?? 0),
+    baseAmount: Number(pendingPayment.baseAmount ?? 0),
+    platformFee: Number(pendingPayment.platformFee ?? 0),
+    processingFee: Number(pendingPayment.gatewayFee ?? 0),
+    gstAmount: Number(pendingPayment.gatewayFeeGst ?? 0),
+    totalAmount: Number(pendingPayment.amount ?? 0),
   } as ReturnType<typeof calculatePaymentBreakdown>
 
   // ── 6. DB transaction: Payment=PAID, Booking=CONFIRMED, Occurrences=CONFIRMED ──

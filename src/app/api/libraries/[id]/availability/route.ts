@@ -99,7 +99,7 @@ export async function POST(
     const [allConflictingOccurrences, allLegacyConflicts] = await Promise.all([
       prisma.bookingOccurrence.findMany({
         where: {
-          seatId: { not: null },
+          seatId: { not: '' }, // filter out placeholder; actual seatId is always non-empty
           status: { in: ['HELD', 'CONFIRMED'] },
           startTime: { lt: latestEnd },
           endTime: { gt: earliestStart },
@@ -108,12 +108,7 @@ export async function POST(
           seatId: true,
           startTime: true,
           endTime: true,
-          booking: {
-            select: {
-              status: true,
-              holdExpiresAt: true,
-            },
-          },
+          bookingId: true,
         },
       }),
       prisma.booking.findMany({
@@ -134,15 +129,8 @@ export async function POST(
       }),
     ])
 
-    // Filter out expired PENDING holds
-    const validConflicts = allConflictingOccurrences.filter(occ => {
-      const b = occ.booking
-      if (!b) return false
-      if (b.status === 'PENDING' && (!b.holdExpiresAt || b.holdExpiresAt <= now)) {
-        return false
-      }
-      return true
-    })
+    // Filter out expired PENDING holds — not needed here since we only query HELD/CONFIRMED
+    const validConflicts = allConflictingOccurrences
 
     const validLegacyConflicts = allLegacyConflicts.filter(b => {
       if (b.status === 'PENDING' && (!b.holdExpiresAt || b.holdExpiresAt <= now)) {
@@ -186,7 +174,7 @@ export async function POST(
         label: true,
         seatType: true,
         status: true,
-        priceModifier: true,
+        extraPrice: true,
       },
       orderBy: { label: 'asc' },
     })

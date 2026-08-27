@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
       membershipRevenue: membershipRev._sum.ownerAmount ?? 0,
       bookingRevenue: bookingRev._sum.ownerAmount ?? 0,
       refunds: refunds._sum.refundAmount ?? 0,
-      net: (total._sum.ownerAmount ?? 0) - (refunds._sum.refundAmount ?? 0),
+      net: (Number(total._sum.ownerAmount ?? 0)) - (Number(refunds._sum.refundAmount ?? 0)),
       monthly,
     })
   } catch (error: unknown) {

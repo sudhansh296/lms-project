@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
     if (!owner) return Response.json({ error: 'Owner not found' }, { status: 404 })
 
     // ── 1. Create Linked Account ──────────────────────────────────────────────
+    // Idempotent: if accountId already saved, reuse it
     let accountId = owner.razorpayAccountId
     if (!accountId) {
       const account = await createLinkedAccount({
@@ -83,9 +84,15 @@ export async function POST(request: NextRequest) {
         contact_info: { mobile, email },
       })
       accountId = account.id
+      // Persist immediately so a crash here doesn't orphan the Razorpay account
+      await prisma.libraryOwner.update({
+        where: { id: owner.id },
+        data: { razorpayAccountId: accountId, razorpayAccountStatus: 'IN_PROGRESS' },
+      })
     }
 
     // ── 2. Create Stakeholder ─────────────────────────────────────────────────
+    // Idempotent: skip if stakeholderId already recorded for THIS account
     let stakeholderId = owner.razorpayStakeholderId
     if (!stakeholderId && accountId) {
       const stakeholder = await createStakeholder(accountId, {
@@ -104,9 +111,15 @@ export async function POST(request: NextRequest) {
         kyc: { pan },
       })
       stakeholderId = stakeholder.id
+      // Persist immediately
+      await prisma.libraryOwner.update({
+        where: { id: owner.id },
+        data: { razorpayStakeholderId: stakeholderId },
+      })
     }
 
     // ── 3. Request Route product ──────────────────────────────────────────────
+    // Idempotent: skip if productId already recorded for THIS account
     let productId = owner.razorpayProductId
     let activationStatus = owner.razorpayActivationStatus
     if (!productId && accountId) {
@@ -115,20 +128,20 @@ export async function POST(request: NextRequest) {
       activationStatus = normalizeActivationStatus(product.activation_status)
     }
 
-    // ── 4. Persist to DB ──────────────────────────────────────────────────────
+    // ── 4. Final consolidated DB write ────────────────────────────────────────
     const updated = await prisma.libraryOwner.update({
       where: { id: owner.id },
       data: {
-        razorpayAccountId: accountId,
-        razorpayAccountStatus: activationStatus ?? 'IN_PROGRESS',
-        razorpayStakeholderId: stakeholderId,
-        razorpayProductId: productId,
+        razorpayAccountId:       accountId,
+        razorpayAccountStatus:   activationStatus ?? 'IN_PROGRESS',
+        razorpayStakeholderId:   stakeholderId,
+        razorpayProductId:       productId,
         razorpayActivationStatus: activationStatus,
       },
       select: {
-        razorpayAccountId: true,
+        razorpayAccountId:       true,
         razorpayActivationStatus: true,
-        settlementReady: true,
+        settlementReady:          true,
       },
     })
 

@@ -84,7 +84,9 @@ export async function GET(request: NextRequest) {
           : null
 
       const isOpen = isLibraryOpen(lib.hours, lib.is24Hours)
-      const lowestPrice = lib.membershipPlans[0]?.monthlyPrice ?? null
+      const lowestPrice = lib.membershipPlans[0]?.monthlyPrice != null
+        ? Number(lib.membershipPlans[0].monthlyPrice)
+        : null
       const coverPhoto = lib.photos[0]?.url ?? null
 
       return {

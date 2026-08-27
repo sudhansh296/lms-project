@@ -57,7 +57,6 @@ export const ownerRegisterSchema = z.object({
   // STEP 4: Facilities - at least one required (FIX 13)
   facilities: z.array(z.string().trim().min(1)).min(1, 'At least one facility required'),
   
-  // STEP 5: Hours - at least one open day required (FIX 14)
   // STEP 5: Hours - all 7 days required, at least 1 open (FIX 14)
   // P1-2: Allow null times for closed days
   hours: z.array(z.object({
@@ -67,23 +66,30 @@ export const ownerRegisterSchema = z.object({
     closeTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   })).length(7, 'Must provide hours for all 7 days')
     .refine(
+      (hours) => {
+        // No duplicate dayOfWeek entries (e.g. two Monday rows)
+        const days = hours.map(h => h.dayOfWeek)
+        return new Set(days).size === days.length
+      },
+      { message: 'Duplicate day entries are not allowed' }
+    )
+    .refine(
       (hours) => hours.some(h => h.isOpen),
       { message: 'At least one day must be open' }
     )
     .refine(
       (hours) => hours.every(h => {
-        // Closed days can have null/undefined times
         if (!h.isOpen) return true
-        // Open days must have both times
         if (!h.openTime || !h.closeTime) return false
         const [oh, om] = h.openTime.split(':').map(Number)
         const [ch, cm] = h.closeTime.split(':').map(Number)
-        const openMins = oh * 60 + om
-        const closeMins = ch * 60 + cm
-        // Reject same-minute or backwards times
-        return closeMins > openMins
+        // Reject impossible clock values: hour 0-23, minute 0-59
+        if (oh > 23 || om > 59) return false
+        if (ch > 23 || cm > 59) return false
+        // Close must be strictly after open
+        return ch * 60 + cm > oh * 60 + om
       }),
-      { message: 'All open days must have valid opening hours (close time after open time)' }
+      { message: 'All open days must have valid opening hours (HH 00-23, MM 00-59, close after open)' }
     ),
   
   // STEP 6: Rules - at least one required (FIX 15)
@@ -119,6 +125,18 @@ export const libraryUpdateSchema = z.object({
   is24Hours: z.boolean().optional(),
   basePrice: z.number().min(0).optional(),
 })
+
+/** Validates HH:MM strictly: hours 00-23, minutes 00-59 */
+const clockTimeSchema = z
+  .string()
+  .regex(/^\d{2}:\d{2}$/, 'Use HH:MM format')
+  .refine(
+    (val) => {
+      const [h, m] = val.split(':').map(Number)
+      return h >= 0 && h <= 23 && m >= 0 && m <= 59
+    },
+    { message: 'Invalid time: hours must be 00-23 and minutes 00-59' }
+  )
 
 export const seatSchema = z.object({
   label: z.string().min(1, 'Seat label required'),
@@ -156,11 +174,13 @@ export const monthlyRatePlanSchema = z.object({
 
   // Time selection mode
   timeSelectionMode: z.enum(['FLEXIBLE', 'FIXED']).default('FLEXIBLE'),
-  fixedStartTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
-  fixedEndTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
+  fixedStartTime: clockTimeSchema.optional().nullable(),
+  fixedEndTime: clockTimeSchema.optional().nullable(),
 
   // Allowed days of week (0=Sun … 6=Sat)
-  allowedDays: z.array(z.number().int().min(0).max(6)).min(1, 'At least one day required').default([0,1,2,3,4,5,6]),
+  allowedDays: z.array(z.number().int().min(0).max(6)).min(1, 'At least one day required')
+    .refine(days => new Set(days).size === days.length, { message: 'Duplicate days in allowedDays' })
+    .default([0,1,2,3,4,5,6]),
 
   benefits: z.array(z.string()).default([]),
 }).superRefine((data, ctx) => {
@@ -208,11 +228,13 @@ export const legacyPackagePlanSchema = z.object({
 
   // Time selection mode
   timeSelectionMode: z.enum(['FLEXIBLE', 'FIXED']).default('FLEXIBLE'),
-  fixedStartTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
-  fixedEndTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:MM format').optional().nullable(),
+  fixedStartTime: clockTimeSchema.optional().nullable(),
+  fixedEndTime: clockTimeSchema.optional().nullable(),
 
   // Allowed days of week
-  allowedDays: z.array(z.number().int().min(0).max(6)).min(1, 'At least one day required').default([0,1,2,3,4,5,6]),
+  allowedDays: z.array(z.number().int().min(0).max(6)).min(1, 'At least one day required')
+    .refine(days => new Set(days).size === days.length, { message: 'Duplicate days in allowedDays' })
+    .default([0,1,2,3,4,5,6]),
 
   benefits: z.array(z.string()).default([]),
 }).superRefine((data, ctx) => {
@@ -257,8 +279,8 @@ export const membershipPlanCreateSchema = z.object({
   durationUnit: z.enum(['DAY', 'WEEK', 'MONTH', 'YEAR']).optional(),
   price: z.number().min(0).optional(),
   timeSelectionMode: z.enum(['FLEXIBLE', 'FIXED']).default('FLEXIBLE'),
-  fixedStartTime: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
-  fixedEndTime: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+  fixedStartTime: clockTimeSchema.optional().nullable(),
+  fixedEndTime: clockTimeSchema.optional().nullable(),
   allowedDays: z.array(z.number().int().min(0).max(6)).min(1).default([0,1,2,3,4,5,6]),
   benefits: z.array(z.string()).default([]),
 }).superRefine((data, ctx) => {

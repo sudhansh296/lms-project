@@ -211,7 +211,7 @@ model Library {
   maxBookingMins  Int           @default(480)
   bookingInterval Int           @default(15)
   is24Hours       Boolean       @default(false)
-  basePrice       Float         @default(0)  // seat booking price in INR — replaces MembershipPlan pricing
+  basePrice       Decimal       @default(0)  @db.Decimal(12,2) // seat booking price in INR
 
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -321,7 +321,7 @@ model Seat {
   width       Float      @default(60)
   height      Float      @default(60)
   rotation    Float      @default(0)
-  extraPrice  Float?     // additional price on top of base, if any
+  extraPrice  Decimal?   @db.Decimal(12,2) // additional price on top of base, if any
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -371,10 +371,10 @@ model MembershipPlan {
   pricingModel String  @default("LEGACY_PACKAGE") @map("pricing_model") // LEGACY_PACKAGE | MONTHLY_RATE
   
   // ── Pricing (legacy field for backward compat) ────────────────────────────
-  price        Float   // For LEGACY_PACKAGE: total package price. For MONTHLY_RATE: deprecated, use monthlyPrice
+  price        Decimal   @db.Decimal(12,2) // For LEGACY_PACKAGE: total package price. For MONTHLY_RATE: deprecated, use monthlyPrice
   
   // ── Monthly Rate Pricing (NEW - authoritative for MONTHLY_RATE plans) ────
-  monthlyPrice Float?  @map("monthly_price") // Price per month for this daily duration (e.g. ₹150/month for 2hrs/day)
+  monthlyPrice Decimal?  @db.Decimal(12,2) @map("monthly_price") // Price per month for this daily duration
 
   // ── Time selection mode ───────────────────────────────────────────────────
   timeSelectionMode  String  @default("FLEXIBLE") // FLEXIBLE | FIXED
@@ -408,7 +408,7 @@ model StudentMembership {
   status      MembershipStatus @default(PENDING)
   startDate   DateTime
   endDate     DateTime
-  paidAmount  Float
+  paidAmount  Decimal          @db.Decimal(12,2)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
@@ -440,12 +440,12 @@ model Booking {
 
   // ── Snapshot: price at time of booking (immutable after creation) ─────────
   planNameSnapshot      String?
-  planPriceSnapshot     Float?
-  seatExtraSnapshot     Float?
+  planPriceSnapshot     Decimal?  @db.Decimal(12,2)
+  seatExtraSnapshot     Decimal?  @db.Decimal(12,2)
   dailyMinutesSnapshot  Int?
   durationSnapshot      String?   // e.g. "3 MONTH" (legacy)
-  monthlyPriceSnapshot  Float?    @map("monthly_price_snapshot") // Monthly rate at time of booking (for MONTHLY_RATE plans)
-  selectedMonths        Int?      @map("selected_months") // Number of months student purchased (for MONTHLY_RATE plans)
+  monthlyPriceSnapshot  Decimal?  @db.Decimal(12,2) @map("monthly_price_snapshot")
+  selectedMonths        Int?      @map("selected_months")
 
   // ── Legacy single-occurrence fields (kept for backward compat) ───────────
   bookingDate  DateTime      // date portion
@@ -453,7 +453,7 @@ model Booking {
   endTime      DateTime
 
   status       BookingStatus @default(PENDING)
-  totalAmount  Float
+  totalAmount  Decimal       @db.Decimal(12,2)
   bookingRef   String        @unique @default(cuid())
   notes        String?
   holdExpiresAt DateTime?
@@ -495,34 +495,34 @@ model Payment {
   id                  String        @id @default(cuid())
   studentId           String
   student             Student       @relation(fields: [studentId], references: [id])
-  amount              Float
+  amount              Decimal       @db.Decimal(12,2)
   status              PaymentStatus @default(PENDING)
   paymentMethod       String?       // RAZORPAY | CASH | UPI | CARD
   paymentType         String?       // SEAT_BOOKING | SUBSCRIPTION
   // Razorpay fields
-  gatewayOrderId      String?
-  gatewayPaymentId    String?
+  gatewayOrderId      String?       @unique
+  gatewayPaymentId    String?       @unique
   gatewaySignature    String?
-  gatewayTransferId   String?       // Razorpay transfer ID (for route to owner)
-  refundId            String?
-  refundAmount        Float?
+  gatewayTransferId   String?       @unique
+  refundId            String?       @unique
+  refundAmount        Decimal?      @db.Decimal(12,2)
   
-  // Platform commission tracking (NEW MODEL: deducted FROM owner, not added to student)
-  platformFee         Float?        // Amount kept by platform (5% of baseAmount, deducted from owner)
-  ownerAmount         Float?        // Amount routed to library owner (baseAmount - platformFee)
+  // Platform commission tracking
+  platformFee         Decimal?      @db.Decimal(12,2)
+  ownerAmount         Decimal?      @db.Decimal(12,2)
   
-  // Gateway fee recovery (separate from platform commission, recovered from student)
-  gatewayFee          Float?        @map("gateway_fee") // Razorpay payment gateway fee (charged to student)
-  gatewayFeeGst       Float?        @map("gateway_fee_gst") // GST on gateway fee (charged to student)
-  processingFee       Float?        // DEPRECATED: use gatewayFee instead
-  gstAmount           Float?        // DEPRECATED: use gatewayFeeGst instead
+  // Gateway fee recovery
+  gatewayFee          Decimal?      @db.Decimal(12,2) @map("gateway_fee")
+  gatewayFeeGst       Decimal?      @db.Decimal(12,2) @map("gateway_fee_gst")
+  processingFee       Decimal?      @db.Decimal(12,2) // DEPRECATED: use gatewayFee
+  gstAmount           Decimal?      @db.Decimal(12,2) // DEPRECATED: use gatewayFeeGst
   
   // Pricing breakdown
-  baseAmount          Float?        // libraryBaseAmount (planPrice/monthlyPrice × months + seatExtra)
-  planPrice           Float?        // Plan package price (legacy) or calculated amount (monthlyPrice × months)
-  monthlyPrice        Float?        @map("monthly_price") // Monthly rate used (for MONTHLY_RATE plans)
-  selectedMonths      Int?          @map("selected_months") // Number of months purchased (for MONTHLY_RATE plans)
-  seatExtraAmount     Float?        // Seat extra charge
+  baseAmount          Decimal?      @db.Decimal(12,2)
+  planPrice           Decimal?      @db.Decimal(12,2)
+  monthlyPrice        Decimal?      @db.Decimal(12,2) @map("monthly_price")
+  selectedMonths      Int?          @map("selected_months")
+  seatExtraAmount     Decimal?      @db.Decimal(12,2)
 
   // Settlement / Route transfer tracking
   settlementStatus    String?       @default("NOT_REQUIRED") // NOT_REQUIRED | PENDING | PROCESSING | PROCESSED | FAILED | RETRY_REQUIRED | REVERSED
@@ -548,7 +548,7 @@ model OwnerPayment {
   id                  String        @id @default(cuid())
   ownerId             String
   owner               LibraryOwner  @relation(fields: [ownerId], references: [id])
-  amount              Float
+  amount              Decimal       @db.Decimal(12,2)
   status              PaymentStatus @default(PENDING)
   paymentMethod       String?
   gatewayOrderId      String?
@@ -619,7 +619,7 @@ model SubscriptionPlan {
   id             String   @id @default(cuid())
   name           String
   description    String?
-  price          Float    @default(0)
+  price          Decimal  @default(0)  @db.Decimal(12,2)
   billingCycle   String   @default("MONTHLY") // MONTHLY | YEARLY
   trialDays      Int      @default(0)
   maxSeats       Int?

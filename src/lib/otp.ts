@@ -285,26 +285,39 @@ export async function consumeOtpVerification(
 
 /**
  * Send OTP via configured provider.
- * CONSOLE provider prints to server logs (safe for development).
+ * CONSOLE provider prints to server logs (development only).
+ * In production (NODE_ENV=production), CONSOLE is rejected — set OTP_PROVIDER=FAST2SMS or MSG91.
  */
 export async function sendOtp(mobile: string, otp: string): Promise<{ sent: boolean; error?: string }> {
   const provider = process.env.OTP_PROVIDER ?? 'CONSOLE'
 
   if (provider === 'CONSOLE') {
+    if (process.env.NODE_ENV === 'production') {
+      // Hard-fail in production — never silently drop OTPs
+      throw new Error(
+        'OTP_PROVIDER is CONSOLE in production. Set OTP_PROVIDER=FAST2SMS or OTP_PROVIDER=MSG91 and provide OTP_API_KEY.'
+      )
+    }
     // Development mode — log to server console, never to client
     console.log(`[OTP DEV] Mobile: ${mobile} | OTP: ${otp} | Expires in: ${OTP_EXPIRY_MINUTES} minutes`)
     return { sent: true }
   }
 
   if (provider === 'FAST2SMS') {
+    if (!process.env.OTP_API_KEY) {
+      throw new Error('OTP_API_KEY must be set when OTP_PROVIDER=FAST2SMS')
+    }
     return sendFast2Sms(mobile, otp)
   }
 
   if (provider === 'MSG91') {
+    if (!process.env.OTP_API_KEY) {
+      throw new Error('OTP_API_KEY must be set when OTP_PROVIDER=MSG91')
+    }
     return sendMsg91(mobile, otp)
   }
 
-  return { sent: false, error: 'Unknown OTP provider configured' }
+  throw new Error(`Unknown OTP_PROVIDER: "${provider}". Valid values: FAST2SMS, MSG91, CONSOLE (dev only).`)
 }
 
 async function sendFast2Sms(mobile: string, otp: string): Promise<{ sent: boolean; error?: string }> {

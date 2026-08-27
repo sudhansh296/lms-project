@@ -91,7 +91,7 @@ export default function ReferralMembershipPage() {
     { key: 'STANDARD', threshold: REFERRAL_THRESHOLDS.STANDARD },
     { key: 'LEVEL_1',  threshold: REFERRAL_THRESHOLDS.LEVEL_1  },
     { key: 'LEVEL_2',  threshold: REFERRAL_THRESHOLDS.LEVEL_2  },
-    { key: 'LEVEL_3',  threshold: REFERRAL_THRESHOLDS.LEVEL_3  },
+    // LEVEL_3 removed (P1-8)
   ]
 
   return (

@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 9. Check settlementReady (skip for free plans) ────────────────────────
-    const willCharge = plan.price > 0 || (seat.extraPrice ?? 0) > 0
+    const willCharge = Number(plan.price) > 0 || Number(seat.extraPrice ?? 0) > 0
     if (willCharge && !library.owner.settlementReady) {
       return Response.json({
         error: 'OWNER_SETTLEMENT_NOT_ACTIVE',
@@ -211,12 +211,12 @@ export async function POST(request: NextRequest) {
     // For MONTHLY_RATE plans: libraryBaseAmount = (monthlyPrice × selectedMonths) + seatExtra
     // For LEGACY_PACKAGE plans: libraryBaseAmount = price + seatExtra
     const planBasePrice = isMonthlyRate 
-      ? (plan.monthlyPrice ?? plan.price) * selectedMonths
-      : plan.price
+      ? Number(plan.monthlyPrice ?? plan.price) * selectedMonths
+      : Number(plan.price)
     
-    const breakdown = calculatePaymentBreakdown(planBasePrice, seat.extraPrice ?? 0, {
+    const breakdown = calculatePaymentBreakdown(planBasePrice, Number(seat.extraPrice ?? 0), {
       months: isMonthlyRate ? selectedMonths : undefined,
-      monthlyPrice: isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : undefined,
+      monthlyPrice: isMonthlyRate ? Number(plan.monthlyPrice ?? plan.price) : undefined,
     })
     const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000)
 
@@ -232,9 +232,9 @@ export async function POST(request: NextRequest) {
       ? `${selectedMonths} MONTH`
       : `${plan.durationValue} ${plan.durationUnit}`
     const planNameSnapshot      = plan.name
-    const planPriceSnapshot     = planBasePrice
-    const monthlyPriceSnapshot  = isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : null
-    const seatExtraSnapshot     = seat.extraPrice ?? 0
+    const planPriceSnapshot     = planBasePrice  // already a number
+    const monthlyPriceSnapshot  = isMonthlyRate ? Number(plan.monthlyPrice ?? plan.price) : null
+    const seatExtraSnapshot     = Number(seat.extraPrice ?? 0)
     const dailyMinutesSnapshot  = plan.dailyMinutes
 
     // ── 13. Free plan — confirm immediately ───────────────────────────────────

@@ -53,7 +53,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       select: { amount: true },
     })
     const expectedAmountPaise = pendingPayment
-      ? toPaise(pendingPayment.amount)
+      ? toPaise(Number(pendingPayment.amount))
       : 0  // payment-service will still verify against Razorpay
 
     // ── 3. Delegate to shared finalization logic ───────────────────────────────

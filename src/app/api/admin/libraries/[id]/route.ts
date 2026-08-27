@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { Prisma } from '@/generated/prisma/client'
 import { getMembershipLevel } from '@/lib/referral'
 
 export async function GET(
@@ -132,7 +133,7 @@ export async function PATCH(
             razorpayProductId: null,
             razorpayStakeholderId: null,
             razorpayActivationStatus: null,
-            settlementRequirements: null,
+            settlementRequirements: Prisma.JsonNull,
             settlementActivatedAt: null,
             bankLast4: null,
           } : {}),

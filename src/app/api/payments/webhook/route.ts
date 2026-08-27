@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
             razorpayOrderId,
             razorpayPaymentId,
             razorpaySignature: '',   // signature already verified above
-            expectedAmountPaise: toPaise(existing.amount),
+            expectedAmountPaise: toPaise(Number(existing.amount)),
           })
         }
         return Response.json({ received: true })
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
         where: { bookingId, gatewayOrderId: razorpayOrderId },
         select: { amount: true, booking: { select: { studentId: true } } },
       })
-      const expectedAmountPaise = localPayment ? toPaise(localPayment.amount) : payment.amount
+      const expectedAmountPaise = localPayment ? toPaise(Number(localPayment.amount)) : payment.amount
       const studentId = localPayment?.booking?.studentId
 
       if (!studentId) {
