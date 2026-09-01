@@ -4,14 +4,14 @@ import { useRequireAuth, useAuth } from '@/contexts/auth-context'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { PageLoading } from '@/components/ui/loading'
-import { Home, Search, BookOpen, CreditCard, User } from 'lucide-react'
+import { Home, Search, BookOpen, BarChart3, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const BOTTOM_NAV = [
   { href: '/student', label: 'Home', icon: Home },
   { href: '/student/explore', label: 'Explore', icon: Search },
   { href: '/student/bookings', label: 'Bookings', icon: BookOpen },
-  { href: '/student/expiry', label: 'Expiry', icon: CreditCard },
+  { href: '/student/study', label: 'Study', icon: BarChart3 },
   { href: '/student/profile', label: 'Profile', icon: User },
 ]
 
