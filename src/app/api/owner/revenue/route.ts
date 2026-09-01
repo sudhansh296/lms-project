@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, format } from 'date-fns'
+import { serialize } from '@/lib/serialize'
 import { checkAnalyticsAccess } from '@/lib/level-limits'
 import type { OwnerMembershipLevel } from '@/lib/referral'
 
@@ -98,18 +99,18 @@ export async function GET(request: NextRequest) {
           },
           _sum: { ownerAmount: true },
         })
-        return { label: format(d, 'MMM yy'), amount: res._sum.ownerAmount ?? 0 }
+        return { label: format(d, 'MMM yy'), amount: Number(res._sum.ownerAmount ?? 0) }
       })
     )
 
-    return Response.json({
+    return Response.json(serialize({
       total: total._sum.ownerAmount ?? 0,
       membershipRevenue: membershipRev._sum.ownerAmount ?? 0,
       bookingRevenue: bookingRev._sum.ownerAmount ?? 0,
       refunds: refunds._sum.refundAmount ?? 0,
       net: (Number(total._sum.ownerAmount ?? 0)) - (Number(refunds._sum.refundAmount ?? 0)),
       monthly,
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

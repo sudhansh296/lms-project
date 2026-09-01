@@ -1,6 +1,7 @@
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfDay, startOfMonth, addDays } from 'date-fns'
+import { serialize } from '@/lib/serialize'
 
 export async function GET() {
   try {
@@ -84,7 +85,7 @@ export async function GET() {
       }),
     ])
 
-    return Response.json({
+    return Response.json(serialize({
       seats: {
         total: totalSeats,
         available: availableSeats,
@@ -99,7 +100,7 @@ export async function GET() {
         today:   todayRevenue._sum.ownerAmount   ?? 0,
         monthly: monthlyRevenue._sum.ownerAmount ?? 0,
       },
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

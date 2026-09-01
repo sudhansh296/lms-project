@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
 import { addDays, startOfDay, isSameDay, parseISO } from 'date-fns'
+import { serialize } from '@/lib/serialize'
 
 /**
  * P1-1: Generate exact occurrences for recurring booking and check each individually
@@ -225,14 +226,14 @@ export async function POST(
       return b.availabilityPercentage - a.availabilityPercentage
     })
 
-    return Response.json({
+    return Response.json(serialize({
       seats: seatsWithAvailability,
       summary: {
         totalSeats: seats.length,
         fullyAvailableSeats: seatsWithAvailability.filter(s => s.isFullyAvailable).length,
         totalOccurrences: occurrenceConflicts.length,
       },
-    })
+    }))
   } catch (error) {
     console.error('Availability check error:', error)
     return Response.json({ 

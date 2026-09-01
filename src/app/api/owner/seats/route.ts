@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { seatSchema } from '@/lib/validations'
+import { serialize } from '@/lib/serialize'
 import { checkSeatLimit } from '@/lib/level-limits'
 import type { OwnerMembershipLevel } from '@/lib/referral'
 
@@ -22,7 +23,7 @@ export async function GET() {
       orderBy: { label: 'asc' },
     })
 
-    return Response.json({ seats })
+    return Response.json(serialize({ seats }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       entityId: seat.id,
     })
 
-    return Response.json({ seat }, { status: 201 })
+    return Response.json(serialize({ seat }), { status: 201 })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

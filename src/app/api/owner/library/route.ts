@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { libraryUpdateSchema } from '@/lib/validations'
+import { serialize } from '@/lib/serialize'
 
 export async function GET() {
   try {
@@ -24,7 +25,7 @@ export async function GET() {
       return Response.json({ error: 'Library not found' }, { status: 404 })
     }
 
-    return Response.json({ library })
+    return Response.json(serialize({ library }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

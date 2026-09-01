@@ -187,11 +187,11 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
     
   // Calculate display price for monthly rate plans
   const displayMonthlyPrice = isMonthlyRate 
-    ? (selectedPlan?.monthlyPrice ?? selectedPlan?.price ?? 0)
+    ? Number(selectedPlan?.monthlyPrice ?? selectedPlan?.price ?? 0)
     : 0
   const displayTotalPrice = isMonthlyRate
     ? displayMonthlyPrice * selectedMonths
-    : (selectedPlan?.price ?? 0)
+    : Number(selectedPlan?.price ?? 0)
 
   // ── Fetch available seats for the plan's daily slot ─────────────────────────
   const fetchSeats = async () => {
@@ -491,7 +491,9 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
           
           {library?.membershipPlans.filter(p => p.isActive !== false).map(plan => {
             const isPlanMonthlyRate = plan.pricingModel === 'MONTHLY_RATE'
-            const planDisplayPrice = isPlanMonthlyRate ? (plan.monthlyPrice ?? plan.price) : plan.price
+            const planDisplayPrice = isPlanMonthlyRate 
+              ? Number(plan.monthlyPrice ?? plan.price) 
+              : Number(plan.price)
             
             return (
             <div key={plan.id}
@@ -855,7 +857,7 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
                       ${isSelected ? 'ring-2 ring-white ring-offset-1 scale-110 shadow-lg' : ''}`}
                     style={{ left: seat.x, top: seat.y, width: seat.width, height: seat.height, background: bg }}>
                     <span className="leading-none">{seat.label}</span>
-                    {seat.extraPrice && seat.extraPrice > 0 && <span className="text-[8px] opacity-90">+₹{seat.extraPrice}</span>}
+                    {seat.extraPrice && Number(seat.extraPrice) > 0 && <span className="text-[8px] opacity-90">+₹{Number(seat.extraPrice)}</span>}
                   </div>
                 )
               })}
@@ -872,14 +874,14 @@ function BookSeatPageInner({ libraryId }: { libraryId: string }) {
                   <p className="text-indigo-200 text-sm capitalize">{selectedSeat.seatType.toLowerCase()}</p>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold">₹{selectedPlan.price + (selectedSeat.extraPrice || 0)}</p>
+                  <p className="font-bold">₹{Number(selectedPlan.price) + Number(selectedSeat.extraPrice || 0)}</p>
                   <p className="text-indigo-200 text-xs">plan + seat extra</p>
                 </div>
               </div>
               
-              {selectedSeat.extraPrice && selectedSeat.extraPrice > 0 && (
+              {selectedSeat.extraPrice && Number(selectedSeat.extraPrice) > 0 && (
                 <div className="bg-indigo-500 rounded-xl p-2 mb-3 text-xs">
-                  <p className="text-indigo-100">Premium seat includes ₹{selectedSeat.extraPrice} extra charge</p>
+                  <p className="text-indigo-100">Premium seat includes ₹{Number(selectedSeat.extraPrice)} extra charge</p>
                 </div>
               )}
               

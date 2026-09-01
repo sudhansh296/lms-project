@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { serialize } from '@/lib/serialize'
 
 export async function GET(request: NextRequest) {
   try {
@@ -37,10 +38,10 @@ export async function GET(request: NextRequest) {
       prisma.booking.count({ where }),
     ])
 
-    return Response.json({
+    return Response.json(serialize({
       bookings,
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

@@ -214,7 +214,9 @@ export default function LibraryDetailPage({ params }: { params: Promise<{ id: st
                 <h3 className="font-bold text-slate-900 text-sm">Available Daily Study Options</h3>
                 {library.membershipPlans.filter(p => p.isActive !== false).map(plan => {
                   const isMonthlyRate = plan.pricingModel === 'MONTHLY_RATE'
-                  const displayPrice = isMonthlyRate ? (plan.monthlyPrice ?? plan.price) : plan.price
+                  const displayPrice = isMonthlyRate 
+                    ? Number(plan.monthlyPrice ?? plan.price) 
+                    : Number(plan.price)
                   
                   return (
                     <div key={plan.id} className="rounded-2xl bg-white border border-slate-100 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">

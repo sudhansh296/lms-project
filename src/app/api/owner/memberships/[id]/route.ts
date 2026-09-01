@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { membershipPlanCreateSchema, approxDurationDays, generatePlanName } from '@/lib/validations'
+import { serialize } from '@/lib/serialize'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -18,7 +19,7 @@ export async function GET(
     if (!library) return Response.json({ error: 'Library not found' }, { status: 404 })
     const plan = await prisma.membershipPlan.findFirst({ where: { id, libraryId: library.id } })
     if (!plan) return Response.json({ error: 'Plan not found' }, { status: 404 })
-    return Response.json({ plan })
+    return Response.json(serialize({ plan }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

@@ -106,7 +106,7 @@ export default function StudentExpiryPage() {
   const remaining = getRemainingTime(activeBooking.endDate || activeBooking.endTime)
   const isExpired = new Date(activeBooking.endDate || activeBooking.endTime) < new Date()
   const planName = activeBooking.plan?.name || activeBooking.planNameSnapshot || 'Study Plan'
-  const planPrice = activeBooking.plan?.price || activeBooking.planPriceSnapshot || 0
+  const planPrice = Number(activeBooking.plan?.price || activeBooking.planPriceSnapshot || 0)
   
   // Check if this is a monthly rate booking
   const isMonthlyRate = activeBooking.monthlyPriceSnapshot !== null && activeBooking.monthlyPriceSnapshot !== undefined
@@ -239,7 +239,7 @@ export default function StudentExpiryPage() {
                 <span className="text-sm text-slate-500">Total Paid</span>
                 <div className="text-right">
                   <p className="font-bold text-indigo-600 text-base">
-                    ₹{(activeBooking.payment?.amount ?? activeBooking.totalAmount).toFixed(0)}
+                    ₹{Number(activeBooking.payment?.amount ?? activeBooking.totalAmount).toFixed(0)}
                   </p>
                   <p className="text-xs text-slate-500">incl. gateway fees</p>
                 </div>

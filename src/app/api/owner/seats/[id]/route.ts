@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { seatSchema } from '@/lib/validations'
+import { serialize } from '@/lib/serialize'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -37,7 +38,7 @@ export async function PATCH(
       entityId: id,
     })
 
-    return Response.json({ seat: updated })
+    return Response.json(serialize({ seat: updated }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import crypto from 'crypto'
+import { serialize } from '@/lib/serialize'
 import { addDays, addMonths, addYears } from 'date-fns'
 
 // GET — fetch current subscription + available plans
@@ -23,12 +24,12 @@ export async function GET() {
       orderBy: { price: 'asc' },
     })
 
-    return Response.json({
+    return Response.json(serialize({
       subscription: owner.subscription,
       plans,
       razorpayAccountId: owner.razorpayAccountId,
       razorpayAccountStatus: owner.razorpayAccountStatus,
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

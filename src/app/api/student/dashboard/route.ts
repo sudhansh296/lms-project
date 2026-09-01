@@ -1,5 +1,6 @@
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { serialize } from '@/lib/serialize'
 
 export async function GET() {
   try {
@@ -54,12 +55,12 @@ export async function GET() {
         }),
       ])
 
-    return Response.json({
+    return Response.json(serialize({
       activeMemberships,
       upcomingBookings,
       activeBooking,
       recentPayments,
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

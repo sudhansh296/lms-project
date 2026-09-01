@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
+import { serialize } from '@/lib/serialize'
 
 export async function GET(
   request: NextRequest,
@@ -91,10 +92,10 @@ export async function GET(
           !bookedSeatIds.has(seat.id),
       }))
 
-      return Response.json({ seats: seatsWithAvailability, layout })
+      return Response.json(serialize({ seats: seatsWithAvailability, layout }))
     }
 
-    return Response.json({ seats, layout })
+    return Response.json(serialize({ seats, layout }))
   } catch (error) {
     console.error('Seats error:', error)
     return Response.json({ error: 'Internal server error' }, { status: 500 })

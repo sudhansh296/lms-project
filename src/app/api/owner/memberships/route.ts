@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { membershipPlanCreateSchema, approxDurationDays, generatePlanName } from '@/lib/validations'
+import { serialize } from '@/lib/serialize'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -21,7 +22,7 @@ export async function GET() {
       orderBy: { createdAt: 'asc' },
     })
 
-    return Response.json({ plans })
+    return Response.json(serialize({ plans }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -119,7 +120,7 @@ export async function POST(request: NextRequest) {
       metadata: { pricingModel: d.pricingModel, dailyMinutes: d.dailyMinutes },
     })
 
-    return Response.json({ plan }, { status: 201 })
+    return Response.json(serialize({ plan }), { status: 201 })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

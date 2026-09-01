@@ -239,7 +239,8 @@ export default function OwnerDashboard() {
               <div className="space-y-3">
                 {recentBookings.map(b => {
                   const planName = b.plan?.name || b.planNameSnapshot || 'Direct Booking'
-                  const planPrice = b.plan?.price || b.planPriceSnapshot || 0
+                  const planPrice = Number(b.plan?.price || b.planPriceSnapshot || 0)
+                  const totalAmount = Number(b.totalAmount)
                   return (
                     <div key={b.id} className="rounded-xl border border-slate-100 p-4 hover:shadow-sm transition-shadow">
                       <div className="flex items-start gap-3">
@@ -257,8 +258,8 @@ export default function OwnerDashboard() {
                           <div className="flex items-center justify-between">
                             <p className="text-xs text-emerald-600 font-medium">{planName}</p>
                             <div className="text-right">
-                              <p className="text-sm font-bold text-slate-900">{formatCurrency(b.totalAmount)}</p>
-                              {planPrice > 0 && planPrice !== b.totalAmount && (
+                              <p className="text-sm font-bold text-slate-900">{formatCurrency(totalAmount)}</p>
+                              {planPrice > 0 && planPrice !== totalAmount && (
                                 <p className="text-xs text-slate-400">plan: {formatCurrency(planPrice)}</p>
                               )}
                             </div>

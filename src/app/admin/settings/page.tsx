@@ -113,7 +113,7 @@ export default function AdminSettingsPage() {
                     </Badge>
                   </div>
                   <p className="text-2xl font-bold text-indigo-600">
-                    {plan.price === 0 ? 'Free' : `₹${plan.price}/${plan.billingCycle === 'MONTHLY' ? 'mo' : 'yr'}`}
+                    {Number(plan.price) === 0 ? 'Free' : `₹${Number(plan.price)}/${plan.billingCycle === 'MONTHLY' ? 'mo' : 'yr'}`}
                   </p>
                   {plan.trialDays > 0 && (
                     <p className="text-xs text-slate-500 mt-1">{plan.trialDays} day trial</p>

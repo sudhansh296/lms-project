@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfDay, endOfDay } from 'date-fns'
+import { serialize } from '@/lib/serialize'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -44,10 +45,10 @@ export async function GET(request: NextRequest) {
       prisma.booking.count({ where }),
     ])
 
-    return Response.json({
+    return Response.json(serialize({
       bookings,
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -214,7 +215,7 @@ export async function POST(request: NextRequest) {
       metadata: { paymentMethod, amount },
     })
 
-    return Response.json({ booking }, { status: 201 })
+    return Response.json(serialize({ booking }), { status: 201 })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

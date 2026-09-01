@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { serialize } from '@/lib/serialize'
 
 async function getOwnerLibrary(userId: string) {
   return prisma.library.findFirst({ where: { owner: { userId } } })
@@ -54,10 +55,10 @@ export async function GET(request: NextRequest) {
         })
       : memberships
 
-    return Response.json({
+    return Response.json(serialize({
       students: filtered,
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })

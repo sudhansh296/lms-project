@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
 import { isLibraryOpen } from '@/lib/utils'
+import { serialize } from '@/lib/serialize'
 
 export async function GET(
   _req: NextRequest,
@@ -59,7 +60,7 @@ export async function GET(
     const availableSeats = await prisma.seat.count({ where: { libraryId: id, status: 'AVAILABLE' } })
     const totalSeats = await prisma.seat.count({ where: { libraryId: id } })
 
-    return Response.json({
+    return Response.json(serialize({
       library: {
         ...library,
         avgRating: Math.round(avgRating * 10) / 10,
@@ -67,7 +68,7 @@ export async function GET(
         availableSeats,
         totalSeats,
       },
-    })
+    }))
   } catch (error) {
     console.error('Library detail error:', error)
     return Response.json({ error: 'Internal server error' }, { status: 500 })

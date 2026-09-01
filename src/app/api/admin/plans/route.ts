@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { serialize } from '@/lib/serialize'
 
 export async function GET() {
   try {
@@ -11,7 +12,7 @@ export async function GET() {
         _count: { select: { subscriptions: true } },
       },
     })
-    return Response.json({ plans })
+    return Response.json(serialize({ plans }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
       entityId: plan.id,
     })
 
-    return Response.json({ plan }, { status: 201 })
+    return Response.json(serialize({ plan }), { status: 201 })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
