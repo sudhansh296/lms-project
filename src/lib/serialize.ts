@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Recursively converts all Prisma Decimal objects AND numeric strings
  * returned from Decimal columns to plain JS numbers so they serialize
  * correctly over the wire as JSON numbers (not strings or {s,e,c} objects).
@@ -22,11 +22,16 @@ const STRING_KEYS = new Set([
 
 // Decimal column names — always numeric
 const DECIMAL_KEYS = new Set([
+  // Payment / plan money columns
   'price', 'monthlyPrice', 'extraPrice', 'basePrice',
   'totalAmount', 'paidAmount', 'amount', 'refundAmount',
   'platformFee', 'ownerAmount', 'gatewayFee', 'gatewayFeeGst',
   'processingFee', 'gstAmount', 'baseAmount', 'planPrice',
   'seatExtraAmount', 'planPriceSnapshot', 'seatExtraSnapshot', 'monthlyPriceSnapshot',
+  // Revenue response keys (aggregate _sum values exposed in API responses)
+  'total', 'yearly', 'net', 'membershipRevenue', 'bookingRevenue',
+  'totalRevenue', 'totalPlatformFee', 'totalOwnerSettled', 'monthlyPlatformFee',
+  'refunds', 'lowestPrice',
 ])
 
 export function serialize<T>(data: T, parentKey?: string): T {
@@ -41,7 +46,7 @@ export function serialize<T>(data: T, parentKey?: string): T {
     return (data as any).toNumber() as unknown as T
   }
 
-  // String value on a known Decimal key → convert to number
+  // String value on a known Decimal key -> convert to number
   if (
     typeof data === 'string' &&
     parentKey &&

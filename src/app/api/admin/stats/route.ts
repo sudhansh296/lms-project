@@ -1,3 +1,4 @@
+﻿import { serialize } from '@/lib/serialize'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfMonth, startOfDay } from 'date-fns'
@@ -73,8 +74,8 @@ export async function GET() {
         upcoming: upcomingBookings,
       },
       revenue: {
-        total: totalRevenue._sum.amount ?? 0,
-        monthly: monthlyRevenue._sum.amount ?? 0,
+        total: Number(totalRevenue._sum.amount ?? 0),
+        monthly: Number(monthlyRevenue._sum.amount ?? 0),
       },
       subscriptions: {
         active: activeSubscriptions,
@@ -90,3 +91,4 @@ export async function GET() {
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+

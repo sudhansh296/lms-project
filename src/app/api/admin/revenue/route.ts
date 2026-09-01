@@ -1,7 +1,8 @@
-import { NextRequest } from 'next/server'
+﻿import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { startOfMonth, startOfYear, subMonths, format } from 'date-fns'
+import { serialize } from '@/lib/serialize'
 
 export async function GET(request: NextRequest) {
   try {
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest) {
           where: { status: 'PAID', createdAt: { gte: start, lte: end } },
           _sum: { amount: true },
         })
-        return { label, amount: result._sum.amount ?? 0 }
+        return { label, amount: Number(result._sum.amount ?? 0) }
       })
     )
 
@@ -73,25 +74,25 @@ export async function GET(request: NextRequest) {
       prisma.payment.count({ where: { ...paymentWhere, settlementStatus: 'RETRY_REQUIRED' } }),
     ])
 
-    return Response.json({
-      total: totalRevenue._sum.amount ?? 0,
-      monthly: monthlyRevenue._sum.amount ?? 0,
-      yearly: yearlyRevenue._sum.amount ?? 0,
-      refunds: refunds._sum.refundAmount ?? 0,
-      membershipRevenue: membershipRevenue._sum.amount ?? 0,
-      bookingRevenue: bookingRevenue._sum.amount ?? 0,
+    return Response.json(serialize({
+      total: Number(totalRevenue._sum.amount ?? 0),
+      monthly: Number(monthlyRevenue._sum.amount ?? 0),
+      yearly: Number(yearlyRevenue._sum.amount ?? 0),
+      refunds: Number(refunds._sum.refundAmount ?? 0),
+      membershipRevenue: Number(membershipRevenue._sum.amount ?? 0),
+      bookingRevenue: Number(bookingRevenue._sum.amount ?? 0),
       monthlyBreakdown,
       // Platform commission breakdown
-      totalPlatformFee: totalRevenue._sum.platformFee ?? 0,
-      totalOwnerSettled: totalRevenue._sum.ownerAmount ?? 0,
-      monthlyPlatformFee: monthlyRevenue._sum.platformFee ?? 0,
+      totalPlatformFee: Number(totalRevenue._sum.platformFee ?? 0),
+      totalOwnerSettled: Number(totalRevenue._sum.ownerAmount ?? 0),
+      monthlyPlatformFee: Number(monthlyRevenue._sum.platformFee ?? 0),
       // Settlement health
       settlement: {
         settled: settledCount,
         pending: pendingSettlementCount,
         retryRequired: retryCount,
       },
-    })
+    }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown'
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -99,3 +100,5 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+

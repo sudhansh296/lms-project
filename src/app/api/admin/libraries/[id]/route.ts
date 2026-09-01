@@ -1,8 +1,9 @@
-import { NextRequest } from 'next/server'
+﻿import { NextRequest } from 'next/server'
 import { requireAuth, createAuditLog } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { Prisma } from '@/generated/prisma/client'
 import { getMembershipLevel } from '@/lib/referral'
+import { serialize } from '@/lib/serialize'
 
 export async function GET(
   _req: NextRequest,
@@ -47,7 +48,7 @@ export async function GET(
       _sum: { amount: true },
     })
 
-    return Response.json({ library, totalRevenue: revenue._sum.amount ?? 0 })
+    return Response.json(serialize({ library, totalRevenue: Number(revenue._sum.amount ?? 0) }))
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : ''
     if (msg === 'UNAUTHORIZED') return Response.json({ error: 'Unauthorized' }, { status: 401 })
